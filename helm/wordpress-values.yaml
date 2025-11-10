@@ -1,0 +1,62 @@
+wordpressUsername: admin
+wordpressPassword: "AdminPass123!"
+wordpressEmail: demo@axual.com
+wordpressBlogName: "Axual Demo Blog"
+
+externalDatabase:
+  host: "mysql-primary"
+  port: 3306
+  user: wordpress
+  password: wordpress123
+  database: wordpress
+
+mariadb:
+  enabled: false
+
+persistence:
+  enabled: true
+  storageClass: "gp2"
+  size: 5Gi
+  accessModes:
+    - ReadWriteOnce
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  ingressClassName: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /wp-login.php
+  path: /
+  pathType: Prefix
+
+# Health checks
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+metrics:
+  enabled: true

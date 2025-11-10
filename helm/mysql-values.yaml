@@ -4,10 +4,4 @@ credentials:
 database: "wordpress"
 tls:
   useSelfSigned: true
-instances: 1credentials:
-  root:
-    password: "DemoPassword123!"
-database: "wordpress"
-tls:
-  useSelfSigned: true
-instances: 2
+instances: 1

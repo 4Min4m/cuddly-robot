@@ -15,10 +15,12 @@ echo "💾 Step 3: Installing EBS CSI Driver..."
 kubectl apply -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
 
 echo "🌐 Step 4: Installing AWS Load Balancer Controller..."
-helm repo add aws-load-balancer-controller https://aws.github.io/load-balancer-controller
-helm install aws-load-balancer-controller aws-load-balancer-controller/aws-load-balancer-controller \
+helm repo add eks https://aws.github.io/eks-charts
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
-  --set clusterName=axual-demo-cluster
+  --set clusterName=axual-demo-cluster \
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller
 
 echo "⏳ Step 5: Waiting for cluster components..."
 sleep 60

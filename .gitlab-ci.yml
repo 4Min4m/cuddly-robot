@@ -77,13 +77,14 @@ deploy_prerequisites:
   stage: deploy
   script: |
     helm repo add eks https://aws.github.io/eks-charts
+    helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
     helm repo add mysql-operator https://mysql.github.io/mysql-operator/
     helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
     ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
-    helm upgrade --install aws-ebs-csi-driver eks/aws-ebs-csi-driver --namespace kube-system \
+    helm upgrade --install aws-ebs-csi-driver aws-ebs-csi-driver/aws-ebs-csi-driver --namespace kube-system \
       --set controller.serviceAccount.create=true \
       --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
       --wait --timeout 5m
@@ -126,8 +127,9 @@ deploy_mysql:
 deploy_wordpress:
   stage: deploy
   script: |
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     helm upgrade --install wordpress bitnami/wordpress --namespace default \
       --values helm/wordpress-values.yaml \
       --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \

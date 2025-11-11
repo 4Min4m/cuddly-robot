@@ -42,7 +42,7 @@ validate_terraform:
       echo "Terraform planning failed with unexpected exit code: $plan_exit."
       exit 1
     fi
-    echo "Terraform plan succeeded (Exit code $plan_exit)."
+    echo "Terraform plan succeeded(Exit code $plan_exit)."
   artifacts:
     paths:
       - terraform/plan.tfplan

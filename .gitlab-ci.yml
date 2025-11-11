@@ -109,76 +109,86 @@ deploy_mysql:
     helm repo add mysql-operator https://mysql.github.io/mysql-operator/
     helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    
-    echo "Installing MySQL Operator..."
     helm upgrade --install mysql-operator mysql-operator/mysql-operator \
       --namespace mysql-operator \
       --create-namespace \
-      --wait --timeout 10m
-    
-    echo "Checking MySQL Operator resources..."
+      --wait --timeout 5m
     kubectl get all -n mysql-operator
-    kubectl get deployment -n mysql-operator
-    
-    echo "Waiting for MySQL Operator deployment to be created..."
-    timeout 120s bash -c 'until kubectl get deployment -n mysql-operator mysql-operator 2>/dev/null; do echo "Waiting for deployment..."; sleep 5; done'
-    
-    echo "Waiting for MySQL Operator deployment to be ready..."
     kubectl wait --for=condition=available deployment/mysql-operator -n mysql-operator --timeout=300s
-    
-    echo "Waiting for MySQL Operator pods to be created..."
-    timeout 300s bash -c 'until kubectl get pods -n mysql-operator -l app.kubernetes.io/name=mysql-operator -o name 2>/dev/null | grep -q pod/; do echo "Waiting for operator pods..."; sleep 5; done'
-    
-    echo "Waiting for MySQL Operator pods to be ready..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql-operator -n mysql-operator --timeout=300s
-    
-    echo "MySQL Operator is ready. Installing MySQL InnoDBCluster..."
-    helm upgrade --install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster \
+    kubectl wait --for=condition=ready pod -l name=mysql-operator -n mysql-operator --timeout=300s
+    cat <<EOF | kubectl apply -f -
+apiVersion: mysql.oracle.com/v2
+kind: InnoDBCluster
+metadata:
+  name: my-mysql-innodbcluster
+  namespace: mysql-operator
+spec:
+  secretName: my-mysql-innodbcluster-secret
+  instances: 1
+  router:
+    instances: 1
+  tlsUseSelfSigned: true
+  imagePullPolicy: IfNotPresent
+EOF
+    kubectl create secret generic my-mysql-innodbcluster-secret \
       --namespace mysql-operator \
-      --set credentials.root.password="${MYSQL_ROOT_PASSWORD}" \
-      --set database="wordpress" \
-      --set tls.useSelfSigned=true \
-      --set instances=1 \
-      --timeout 15m
-    
-    echo "Waiting for MySQL InnoDBCluster pods to be created..."
-    timeout 600s bash -c 'until kubectl get pods -n mysql-operator -l app.kubernetes.io/instance=my-mysql-innodbcluster,app.kubernetes.io/component=database -o name 2>/dev/null | grep -q pod/; do echo "Waiting for MySQL pods..."; sleep 10; done'
-    
-    echo "Waiting for MySQL pods to be ready..."
-    kubectl wait --for=condition=ready pod -n mysql-operator -l app.kubernetes.io/instance=my-mysql-innodbcluster,app.kubernetes.io/component=database --timeout=600s
-    
-    echo "Waiting for MySQL to be fully ready..."
-    sleep 30
-    
-    echo "Initializing WordPress database and user..."
+      --from-literal=rootUser=root \
+      --from-literal=rootHost=% \
+      --from-literal=rootPassword="${MYSQL_ROOT_PASSWORD}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl get innodbcluster -n mysql-operator
+    kubectl describe innodbcluster my-mysql-innodbcluster -n mysql-operator
+    timeout 600s bash -c 'until kubectl get innodbcluster my-mysql-innodbcluster -n mysql-operator -o jsonpath="{.status.cluster.status}" 2>/dev/null | grep -q "ONLINE"; do 
+      kubectl get innodbcluster my-mysql-innodbcluster -n mysql-operator -o jsonpath="{.status.cluster.status}" 2>/dev/null || echo "not ready"
+      sleep 10
+    done' || echo "Timeout waiting for cluster status"
+    timeout 600s bash -c 'until kubectl get pods -n mysql-operator -l component=mysqld -o name 2>/dev/null | grep -q pod/; do 
+      kubectl get pods -n mysql-operator
+      sleep 10
+    done'
+    kubectl wait --for=condition=ready pod -n mysql-operator -l component=mysqld --timeout=600s || {
+      kubectl get pods -n mysql-operator
+      kubectl describe pods -n mysql-operator -l component=mysqld
+    }
+    timeout 120s bash -c 'until kubectl get svc my-mysql-innodbcluster -n mysql-operator 2>/dev/null; do echo "Waiting for service..."; sleep 5; done'
+    kubectl get svc -n mysql-operator
+    sleep 60
     for i in {1..10}; do
-      if kubectl run -n mysql-operator mysql-init-$i \
+      if kubectl run -n mysql-operator mysql-connectivity-test \
         --image=mysql:8.0 \
         --rm -i \
         --restart=Never \
-        --command -- \
-        mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
+        -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
         -u root \
         -p${MYSQL_ROOT_PASSWORD} \
-        -e "CREATE DATABASE IF NOT EXISTS wordpress; CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123'; GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%'; FLUSH PRIVILEGES;"; then
-        echo "Database initialization successful!"
+        -e "SELECT 1;"; then
         break
       else
-        echo "Database initialization attempt $i failed, retrying in 10 seconds..."
         sleep 10
       fi
     done
-    
-    echo "Verifying database connectivity..."
+    kubectl run -n mysql-operator mysql-init \
+      --image=mysql:8.0 \
+      --rm -i \
+      --restart=Never \
+      -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
+      -u root \
+      -p${MYSQL_ROOT_PASSWORD} \
+      --execute="
+        CREATE DATABASE IF NOT EXISTS wordpress;
+        CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123';
+        GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%';
+        FLUSH PRIVILEGES;
+        SHOW DATABASES;
+      "
     kubectl run -n mysql-operator mysql-verify \
       --image=mysql:8.0 \
       --rm -i \
       --restart=Never \
-      --command -- \
-      mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
+      -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
       -u wordpress \
       -pwordpress123 \
-      -e "SHOW DATABASES;" || echo "Verification failed but continuing..."
+      -e "SHOW DATABASES; USE wordpress; SHOW TABLES;"
   dependencies:
     - deploy_prerequisites
   only:
@@ -194,8 +204,6 @@ deploy_wordpress:
     helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    
-    echo "Verifying MySQL connectivity before WordPress deployment..."
     kubectl run -n mysql-operator mysql-check \
       --image=mysql:8.0 \
       --rm -i --restart=Never \
@@ -203,22 +211,18 @@ deploy_wordpress:
       mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
       -u wordpress \
       -pwordpress123 \
-      -e "SELECT 1;" || echo "MySQL check failed, but continuing..."
-    
+      -e "SELECT 1;" || echo "MySQL check failed"
     if [ -f helm/wordpress-values.yaml ]; then
-      echo "Using custom wordpress-values.yaml"
       cat helm/wordpress-values.yaml
     else
-      echo "No custom wordpress-values.yaml found, using inline values"
+      echo "No custom wordpress-values.yaml found"
     fi
-    
-    echo "Deploying WordPress..."
     if [ -f helm/wordpress-values.yaml ]; then
       helm upgrade --install wordpress bitnami/wordpress \
         --namespace default \
         --values helm/wordpress-values.yaml \
         --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
-        --wait --timeout 15m
+        --wait --timeout 5m
     else
       helm upgrade --install wordpress bitnami/wordpress \
         --namespace default \
@@ -239,21 +243,12 @@ deploy_wordpress:
         --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
         --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
         --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip \
-        --wait --timeout 15m
+        --wait --timeout 5m
     fi
-    
-    echo "Waiting for WordPress pods to be created..."
     timeout 600s bash -c 'until kubectl get pods -l app.kubernetes.io/name=wordpress -o name 2>/dev/null | grep -q pod/; do echo "Waiting for WordPress pods..."; sleep 10; done'
-    
-    echo "Current WordPress pod status:"
     kubectl get pods -l app.kubernetes.io/name=wordpress
-    
-    echo "WordPress pod logs (if available):"
     kubectl logs -l app.kubernetes.io/name=wordpress -c wordpress --tail=50 || echo "Could not fetch logs yet"
-    
-    echo "Waiting for WordPress pods to be ready..."
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
-    
     echo "Deployment Complete!"
     echo "WordPress URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
     echo "Admin URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
@@ -279,11 +274,7 @@ smoke_tests:
     kubectl get svc wordpress
     kubectl get svc -n mysql-operator my-mysql-innodbcluster
     kubectl get pvc -A
-    
-    # Check WordPress logs for errors
-    echo "Checking WordPress logs..."
     kubectl logs -l app.kubernetes.io/name=wordpress --tail=50 || true
-    
     echo "All smoke tests passed!"
   dependencies:
     - deploy_wordpress

@@ -28,6 +28,7 @@ before_script: |
 
 validate_terraform:
   stage: validate
+  when: manual
   script: |
     cd terraform
     terraform init
@@ -54,6 +55,7 @@ validate_terraform:
 
 deploy_infrastructure:
   stage: infrastructure
+  when: manual
   script: |
     cd terraform
     terraform init

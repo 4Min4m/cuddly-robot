@@ -3,13 +3,6 @@ wordpressPassword: "AdminPass123!"
 wordpressEmail: demo@axual.com
 wordpressBlogName: "Axual Demo Blog"
 
-externalDatabase:
-  host: "mysql-primary"
-  port: 3306
-  user: wordpress
-  password: wordpress123
-  database: wordpress
-
 mariadb:
   enabled: false
 

@@ -25,12 +25,6 @@ before_script: |
   aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
   aws configure set region ${AWS_REGION}
   aws sts get-caller-identity
-  helm repo add eks https://aws.github.io/eks-charts
-  helm repo add mysql-operator https://mysql.github.io/mysql-operator/
-  helm repo add bitnami https://charts.bitnami.com/bitnami
-  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-  helm repo add jetstack https://charts.jetstack.io
-  helm repo update
 
 validate_terraform:
   stage: validate
@@ -82,6 +76,10 @@ deploy_infrastructure:
 deploy_prerequisites:
   stage: deploy
   script: |
+    helm repo add eks https://aws.github.io/eks-charts
+    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
     ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
@@ -107,6 +105,8 @@ deploy_prerequisites:
 deploy_mysql:
   stage: deploy
   script: |
+    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
+    helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     for i in 1 2 3; do helm upgrade --install mysql-operator mysql-operator/mysql-operator --namespace mysql-operator --create-namespace --wait --timeout 5m && break || sleep 30; done
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql-operator -n mysql-operator --timeout=300s
@@ -127,6 +127,7 @@ deploy_wordpress:
   stage: deploy
   script: |
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    helm repo update
     helm upgrade --install wordpress bitnami/wordpress --namespace default \
       --values helm/wordpress-values.yaml \
       --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \

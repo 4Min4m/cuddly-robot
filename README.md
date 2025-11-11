@@ -4,7 +4,7 @@ A production-grade Kubernetes infrastructure demonstrating stateful and stateles
 
 ## Overview
 
-Complete cloud-native setup featuring:
+Complete cloud-native setup featuring: 
 - **AWS EKS Cluster** provisioned with Terraform
 - **Stateful Application**: MySQL with persistent volumes
 - **Stateless Application**: WordPress with external database

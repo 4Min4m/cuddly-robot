@@ -7,6 +7,7 @@ stages:
 variables:
   CLUSTER_NAME: "axual-demo-cluster"
   AWS_REGION: "us-east-1"
+  MYSQL_ROOT_PASSWORD: "DemoPassword123!" 
 
 image: alpine:latest
 
@@ -57,6 +58,11 @@ deploy_infrastructure:
     cd terraform
     terraform init
     terraform apply -input=false plan.tfplan
+    echo "Waiting for EKS cluster to reach ACTIVE state..."
+    aws eks wait cluster-active --name ${CLUSTER_NAME} --region ${AWS_REGION} || { 
+      echo "EKS cluster failed to become active or timed out."
+      exit 1
+    }
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} --alias ${CLUSTER_NAME}
     kubectl cluster-info
     kubectl get nodes

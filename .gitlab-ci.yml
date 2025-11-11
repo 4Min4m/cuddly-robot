@@ -21,6 +21,7 @@ validate_terraform:
   stage: validate
   before_script: *before_script
   script:
+    - cd terraform
     - terraform init
     - terraform validate
     - terraform plan -out=plan.tfplan -detailed-exitcode

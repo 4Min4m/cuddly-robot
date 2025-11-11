@@ -21,6 +21,7 @@ echo "🗑️ Removing Kubernetes resources..."
 kubectl delete namespace mysql-operator || true
 
 echo "🗑️ Destroying Terraform infrastructure..."
+cd terraform
 terraform destroy -auto-approve
 
 echo "✅ Cleanup complete!"

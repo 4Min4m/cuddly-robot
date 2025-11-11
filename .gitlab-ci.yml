@@ -6,7 +6,7 @@ stages:
 
 variables:
   CLUSTER_NAME: "axual-demo-cluster"
-  AWS_REGION: "eu-west-1"
+  AWS_REGION: "us-east-1"
 
 image: alpine:latest
 

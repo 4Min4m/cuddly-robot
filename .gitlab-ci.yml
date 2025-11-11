@@ -112,11 +112,11 @@ deploy_mysql:
     helm upgrade --install mysql-operator mysql-operator/mysql-operator \
       --namespace mysql-operator \
       --create-namespace \
-      --wait --timeout 5m
+      --wait --timeout 10m
     kubectl get all -n mysql-operator
     kubectl wait --for=condition=available deployment/mysql-operator -n mysql-operator --timeout=300s
     kubectl wait --for=condition=ready pod -l name=mysql-operator -n mysql-operator --timeout=300s
-    cat <<EOF | kubectl apply -f -
+    kubectl apply -f - <<EOF
 apiVersion: mysql.oracle.com/v2
 kind: InnoDBCluster
 metadata:
@@ -222,7 +222,7 @@ deploy_wordpress:
         --namespace default \
         --values helm/wordpress-values.yaml \
         --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
-        --wait --timeout 5m
+        --wait --timeout 15m
     else
       helm upgrade --install wordpress bitnami/wordpress \
         --namespace default \
@@ -243,7 +243,7 @@ deploy_wordpress:
         --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
         --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
         --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip \
-        --wait --timeout 5m
+        --wait --timeout 15m
     fi
     timeout 600s bash -c 'until kubectl get pods -l app.kubernetes.io/name=wordpress -o name 2>/dev/null | grep -q pod/; do echo "Waiting for WordPress pods..."; sleep 10; done'
     kubectl get pods -l app.kubernetes.io/name=wordpress

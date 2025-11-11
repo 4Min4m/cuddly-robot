@@ -11,19 +11,15 @@ variables:
 image: alpine:latest
 
 before_script:
-  - apk add --no-cache python3 py3-pip curl
+  - apk add --no-cache python3 py3-pip curl wget unzip bash
   - pip3 install awscli --break-system-packages
-
   - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
-  - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  - chmod +x kubectl && mv kubectl /usr/local/bin/
   - curl -LO "https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz"
-  - tar -zxvf helm-v3.17.0-linux-amd64.tar.gz
-  - mv linux-amd64/helm /usr/local/bin/helm
-
+  - tar -zxvf helm-v3.17.0-linux-amd64.tar.gz && mv linux-amd64/helm /usr/local/bin/
   - wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip"
   - unzip -o terraform.zip -d /usr/local/bin/
   - chmod +x /usr/local/bin/terraform
-  
   - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
   - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
   - aws configure set region ${AWS_REGION}
@@ -35,15 +31,7 @@ validate_terraform:
     - cd terraform
     - terraform init
     - terraform validate
-    - |
-      set +e
-      terraform plan -out=plan.tfplan -detailed-exitcode
-      plan_exit=$?
-      set -e
-      if [ "$plan_exit" -eq 1 ]; then
-        echo "terraform plan failed"
-        exit 1
-      fi
+    - terraform plan -out=plan.tfplan -detailed-exitcode
   artifacts:
     paths:
       - terraform/plan.tfplan
@@ -68,28 +56,28 @@ deploy_infrastructure:
 
 deploy_prerequisites:
   stage: deploy
-  script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+  script: |
+    helm repo add eks https://aws.github.io/eks-charts
+    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm repo update
+
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     
-    - EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
-    - ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
-    
-    - helm repo add eks https://aws.github.io/eks-charts
-    - helm repo add mysql-operator https://mysql.github.io/mysql-operator/
-    - helm repo add bitnami https://charts.bitnami.com/bitnami
-    - helm repo update
-    
-    - helm upgrade --install aws-ebs-csi-driver eks/aws-ebs-csi-driver --namespace kube-system \
+    EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
+    ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
+
+    helm upgrade --install aws-ebs-csi-driver eks/aws-ebs-csi-driver --namespace kube-system \
       --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
       --wait --timeout 5m
     
-    - helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller --namespace kube-system \
+    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller --namespace kube-system \
       --set clusterName=${CLUSTER_NAME} \
       --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
       --wait --timeout 5m
     
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
   dependencies:
     - deploy_infrastructure
   only:
@@ -97,12 +85,20 @@ deploy_prerequisites:
 
 deploy_mysql:
   stage: deploy
-  script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    - for i in 1 2 3; do helm upgrade --install mysql-operator mysql-operator/mysql-operator --namespace mysql-operator --create-namespace --wait --timeout 5m && break || sleep 30; done
-    - helm upgrade --install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster --namespace mysql-operator --set credentials.root.password="DemoPassword123!" --set database="wordpress" --set tls.useSelfSigned=true --set instances=1 --wait --timeout 10m
-    - kubectl wait --for=condition=ready pod -n mysql-operator -l app.kubernetes.io/instance=my-mysql-innodbcluster --timeout=600s
-    - until kubectl run -n mysql-operator mysql-init --image=mysql:8.0 --rm --restart=Never -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local -u root -pDemoPassword123! -e "CREATE DATABASE IF NOT EXISTS wordpress; CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123'; GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%'; FLUSH PRIVILEGES;"; do sleep 10; done
+  script: |
+    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
+    helm repo update
+
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    
+    for i in 1 2 3; do helm upgrade --install mysql-operator mysql-operator/mysql-operator --namespace mysql-operator --create-namespace --wait --timeout 5m && break || sleep 30; done
+    
+    helm upgrade --install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster --namespace mysql-operator --set credentials.root.password="DemoPassword123!" --set database="wordpress" --set tls.useSelfSigned=true --set instances=1 --wait --timeout 10m
+    
+    kubectl wait --for=condition=ready pod -n mysql-operator -l app.kubernetes.io/instance=my-mysql-innodbcluster --timeout=600s
+    
+    until kubectl run -n mysql-operator mysql-init --image=mysql:8.0 --rm --restart=Never -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local -u root -pDemoPassword123! -e "CREATE DATABASE IF NOT EXISTS wordpress; CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123'; GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%'; FLUSH PRIVILEGES;"; do sleep 10; done
+
   dependencies:
     - deploy_prerequisites
   only:
@@ -114,15 +110,21 @@ deploy_mysql:
 
 deploy_wordpress:
   stage: deploy
-  script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    - helm upgrade --install wordpress bitnami/wordpress --namespace default --set wordpressUsername=admin --set wordpressPassword="AdminPass123!" --set wordpressEmail=demo@axual.com --set mariadb.enabled=false --set externalDatabase.host="my-mysql-innodbcluster.mysql-operator.svc.cluster.local" --set externalDatabase.user=wordpress --set externalDatabase.password=wordpress123 --set externalDatabase.database=wordpress --set externalDatabase.port=3306 --set persistence.enabled=true --set persistence.storageClass=gp2 --set persistence.size=5Gi --set service.type=ClusterIP --set ingress.enabled=true --set ingress.ingressClassName=alb --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com --wait --timeout 10m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
-    - echo "Deployment Complete!"
-    - echo "WordPress URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
-    - echo "Admin URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
-    - echo "Username admin"
-    - echo "Password AdminPass123!"
+  script: |
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm repo update
+    
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    
+    helm upgrade --install wordpress bitnami/wordpress --namespace default --values helm/wordpress-values.yaml --wait --timeout 10m
+    
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
+    
+    echo "Deployment Complete!"
+    echo "WordPress URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
+    echo "Admin URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
+    echo "Username admin"
+    echo "Password AdminPass123!"
   dependencies:
     - deploy_mysql
   only:
@@ -130,16 +132,16 @@ deploy_wordpress:
 
 smoke_tests:
   stage: test
-  script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    - kubectl cluster-info
-    - kubectl get pods -A
-    - kubectl get pods -l app.kubernetes.io/name=wordpress
-    - kubectl get pods -n mysql-operator
-    - kubectl get svc wordpress
-    - kubectl get svc -n mysql-operator my-mysql-innodbcluster
-    - kubectl get pvc -A
-    - echo "All smoke tests passed!"
+  script: |
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    kubectl cluster-info
+    kubectl get pods -A
+    kubectl get pods -l app.kubernetes.io/name=wordpress
+    kubectl get pods -n mysql-operator
+    kubectl get svc wordpress
+    kubectl get svc -n mysql-operator my-mysql-innodbcluster
+    kubectl get pvc -A
+    echo "All smoke tests passed!"
   dependencies:
     - deploy_wordpress
   only:

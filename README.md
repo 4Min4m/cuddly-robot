@@ -1,107 +1,94 @@
-```markdown
-# Axual Demo Scenario Assessment
+# Axual Demo Assessment - Cloud Infrastructure
 
-A complete cloud infrastructure demo showcasing Kubernetes cluster deployment with stateful and stateless applications, designed for low-latency environments.
+A production-grade Kubernetes infrastructure demonstrating stateful and stateless application deployment on AWS EKS.
 
-## 🚀 Overview
+## Overview
 
-This project demonstrates a production-ready infrastructure setup featuring:
-- **EKS Cluster** on AWS with Terraform
-- **Stateful Application**: MySQL with persistent storage
+Complete cloud-native setup featuring:
+- **AWS EKS Cluster** provisioned with Terraform
+- **Stateful Application**: MySQL with persistent volumes
 - **Stateless Application**: WordPress with external database
-- **CI/CD Pipeline**: GitLab CI for automated deployments
-- **Monitoring Ready**: Prepared for Prometheus/Grafana integration
+- **GitLab CI/CD** pipeline for automated deployments
+- **Low-latency optimized** network architecture
 
-## 📁 Project Structure
-
-```
-axual-demo/
-├── .gitlab-ci.yml          # CI/CD pipeline
-├── main.tf                 # Terraform infrastructure
-├── variables.tf            # Terraform variables
-├── deploy.sh              # Manual deployment script
-├── destroy.sh             # Cleanup script
-└── README.md              # This file
-```
-
-## 🛠️ Quick Start
-
-### Prerequisites
-- AWS account with credentials
-- GitLab account with CI/CD configured
-- kubectl, helm, and terraform installed (for manual deployment)
-
-### Automated Deployment (Recommended)
-1. Set AWS credentials in GitLab CI/CD variables:
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
-
-2. Push to main branch - pipeline will automatically:
-   - Create EKS cluster with Terraform
-   - Deploy EBS CSI Driver and ALB Controller
-   - Install MySQL Operator and create database
-   - Deploy WordPress with external MySQL
-   - Run smoke tests
-
-### Manual Deployment
-```bash
-# Apply infrastructure
-terraform init
-terraform apply -auto-approve
-
-# Run complete deployment
-./deploy.sh
-```
-
-## 🌐 Access Applications
-
-After deployment:
-- **WordPress**: http://wordpress.your-domain.demo.axual.com
-- **Admin**: http://wordpress.your-domain.demo.axual.com/wp-admin
-  - Username: `admin`
-  - Password: `AdminPass123!`
-
-## 🔧 Key Features
+## Technical Architecture
 
 ### Infrastructure
-- Multi-AZ EKS cluster for high availability
-- Private subnets for low-latency pod communication
-- EBS CSI Driver for stateful application persistence
-- AWS Load Balancer Controller for ingress
+- Multi-AZ EKS cluster with managed node groups
+- Private subnets for application pods, public for load balancers
+- EBS CSI Driver for stateful workload persistence
+- AWS Load Balancer Controller for ingress management
 
 ### Applications
-- **MySQL**: Highly available InnoDB cluster with persistence
-- **WordPress**: Stateless application with external database
-- **Public Access**: Internet-facing ALB with proper security groups
+- **MySQL**: Highly available InnoDB cluster with automated backups
+- **WordPress**: Decoupled architecture using external MySQL database
+- **Public Access**: Secure internet exposure via Application Load Balancer
 
-### Operations
-- GitLab CI/CD with 4-stage pipeline
-- Terraform plan/apply with artifact passing
-- Health checks and retry logic
-- Smoke tests for deployment validation
+## Design Decisions
 
-## 🗑️ Cleanup
+### Platform Selection
+- **AWS EKS over Azure AKS**: Better familiarity and account accessibility while maintaining identical cloud-native patterns
+- **Terraform for IaC**: Declarative infrastructure management with state tracking
+- **Helm for Applications**: Standardized Kubernetes application packaging
 
-```bash
-# Automated cleanup
-./destroy.sh
+### Cost & Performance Optimization
+- **t3.medium burstable instances**: Balanced performance and cost efficiency
+- **Managed node groups**: Reduced operational overhead
+- **Multi-AZ deployment**: High availability without excessive resource allocation
 
-# Or via GitLab pipeline (manual trigger)
-```
+### Security & Operations
+- **Private node groups**: Isolated compute resources
+- **Minimal IAM roles**: Principle of least privilege
+- **Network segmentation**: Separate subnets for different workload types
+- **GitLab CI/CD**: Automated testing and deployment validation
 
-## 💡 Design Decisions
+## Operational Excellence
 
-- **AWS over Azure**: Used AWS EKS due to account accessibility, maintaining same architectural patterns
-- **Cost Optimization**: t3.medium burstable instances, managed node groups
-- **Security**: Private node groups, minimal IAM roles, network isolation
-- **Stateful Handling**: EBS CSI Driver with gp2 storage class for MySQL persistence
+### Monitoring Strategy
+- **Prometheus Stack**: Cluster-level metrics collection with Grafana dashboards
+- **Application Metrics**: WordPress and MySQL performance monitoring
+- **AWS CloudWatch**: Infrastructure-level monitoring and alerting
+- **Health Checks**: Built-in Kubernetes liveness and readiness probes
 
-## 📞 Support
+### Log Management & Retention
+- **EFK Stack**: Fluentd/Fluent-bit for log collection, Elasticsearch for storage, Kibana for visualization
+- **Retention Policy**: 
+  - Application logs: 30 days
+  - Audit logs: 90 days  
+  - Security logs: 1 year
+- **CloudWatch Logs**: Alternative for simplified AWS-native logging
 
-For questions about this implementation:
-- Infrastructure: Terraform files in root directory
-- Applications: Helm charts deployed via CI/CD
-- Pipeline: `.gitlab-ci.yml` for automation logic
+### Cluster Reliability & Maintenance
+- **Managed Node Groups**: Automated node updates and patching
+- **Resource Quotas**: CPU/Memory limits to prevent resource exhaustion
+- **Horizontal Pod Autoscaling**: Automatic scaling based on application load
+- **Regular Backups**: Velero for persistent volume and Kubernetes resource backups
+- **Blue-Green Deployments**: Zero-downtime application updates
+
+### Authentication & RBAC
+- **IAM Integration**: AWS IAM roles for service accounts (IRSA)
+- **Kubernetes RBAC**: 
+  - ClusterRoles for team-based access control
+  - ServiceAccounts for application permissions
+  - Network Policies for micro-segmentation
+- **OpenID Connect**: JWT token authentication with OIDC provider
+
+### Network Design & Security
+- **VPC Architecture**: 
+  - Public subnets for internet-facing load balancers
+  - Private subnets for worker nodes and application pods
+  - NAT Gateway for outbound internet access from private subnets
+- **Security Enforcement**:
+  - Security Groups: Layer 3/4 network segmentation
+  - Network Policies: Kubernetes network micro-segmentation
+  - TLS Encryption: End-to-end SSL/TLS for all external traffic
+  - Web Application Firewall: AWS WAF for HTTP/HTTPS protection
+
+## Technology Stack
+
+- **Infrastructure**: Terraform, AWS EKS, VPC networking
+- **Applications**: MySQL Operator, WordPress Helm charts
+- **Operations**: GitLab CI/CD, Kubernetes, Helm
+- **Storage**: EBS volumes with gp2 storage class
 
 ---
-*Demonstrating modern DevOps practices for cloud-native application deployment.*

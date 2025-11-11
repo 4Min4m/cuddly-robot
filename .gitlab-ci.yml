@@ -7,7 +7,10 @@ stages:
 variables:
   CLUSTER_NAME: "axual-demo-cluster"
   AWS_REGION: "us-east-1"
-  MYSQL_ROOT_PASSWORD: "DemoPassword123!" 
+  MYSQL_ROOT_PASSWORD: "DemoPassword123!"
+  MYSQL_DATABASE: "wordpress"
+  MYSQL_USER: "wordpress"
+  MYSQL_PASSWORD: "wordpress123"
 
 image: alpine:latest
 
@@ -78,7 +81,6 @@ deploy_prerequisites:
   script: |
     helm repo add eks https://aws.github.io/eks-charts
     helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
-    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
     helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
@@ -94,9 +96,7 @@ deploy_prerequisites:
       --set serviceAccount.create=true \
       --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
       --wait --timeout 5m
-    timeout 300s bash -c 'until kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver -o name 2>/dev/null | grep -q pod/; do echo "Waiting for aws-ebs-csi-driver pods..."; sleep 10; done'
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
-    timeout 300s bash -c 'until kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller -o name 2>/dev/null | grep -q pod/; do echo "Waiting for aws-load-balancer-controller pods..."; sleep 10; done'
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
   dependencies:
     - deploy_infrastructure
@@ -106,97 +106,46 @@ deploy_prerequisites:
 deploy_mysql:
   stage: deploy
   script: |
-    helm repo add mysql-operator https://mysql.github.io/mysql-operator/
-    helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    helm upgrade --install mysql-operator mysql-operator/mysql-operator \
-      --namespace mysql-operator \
-      --create-namespace \
-      --wait --timeout 10m
-    kubectl get all -n mysql-operator
-    kubectl wait --for=condition=available deployment/mysql-operator -n mysql-operator --timeout=300s
-    kubectl wait --for=condition=ready pod -l name=mysql-operator -n mysql-operator --timeout=300s
-    kubectl apply -f - <<EOF
-apiVersion: mysql.oracle.com/v2
-kind: InnoDBCluster
-metadata:
-  name: my-mysql-innodbcluster
-  namespace: mysql-operator
-spec:
-  secretName: my-mysql-innodbcluster-secret
-  instances: 1
-  router:
-    instances: 1
-  tlsUseSelfSigned: true
-  imagePullPolicy: IfNotPresent
-EOF
-    kubectl create secret generic my-mysql-innodbcluster-secret \
-      --namespace mysql-operator \
-      --from-literal=rootUser=root \
-      --from-literal=rootHost=% \
-      --from-literal=rootPassword="${MYSQL_ROOT_PASSWORD}" \
+    
+    kubectl create namespace mysql --dry-run=client -o yaml | kubectl apply -f -
+    
+    kubectl create secret generic mysql-secret \
+      --namespace mysql \
+      --from-literal=mysql-root-password="${MYSQL_ROOT_PASSWORD}" \
+      --from-literal=mysql-password="${MYSQL_PASSWORD}" \
       --dry-run=client -o yaml | kubectl apply -f -
-    kubectl get innodbcluster -n mysql-operator
-    kubectl describe innodbcluster my-mysql-innodbcluster -n mysql-operator
-    timeout 600s bash -c 'until kubectl get innodbcluster my-mysql-innodbcluster -n mysql-operator -o jsonpath="{.status.cluster.status}" 2>/dev/null | grep -q "ONLINE"; do 
-      kubectl get innodbcluster my-mysql-innodbcluster -n mysql-operator -o jsonpath="{.status.cluster.status}" 2>/dev/null || echo "not ready"
-      sleep 10
-    done' || echo "Timeout waiting for cluster status"
-    timeout 600s bash -c 'until kubectl get pods -n mysql-operator -l component=mysqld -o name 2>/dev/null | grep -q pod/; do 
-      kubectl get pods -n mysql-operator
-      sleep 10
-    done'
-    kubectl wait --for=condition=ready pod -n mysql-operator -l component=mysqld --timeout=600s || {
-      kubectl get pods -n mysql-operator
-      kubectl describe pods -n mysql-operator -l component=mysqld
-    }
-    timeout 120s bash -c 'until kubectl get svc my-mysql-innodbcluster -n mysql-operator 2>/dev/null; do echo "Waiting for service..."; sleep 5; done'
-    kubectl get svc -n mysql-operator
-    sleep 60
-    for i in {1..10}; do
-      if kubectl run -n mysql-operator mysql-connectivity-test \
-        --image=mysql:8.0 \
-        --rm -i \
-        --restart=Never \
-        -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
-        -u root \
-        -p${MYSQL_ROOT_PASSWORD} \
-        -e "SELECT 1;"; then
-        break
-      else
-        sleep 10
-      fi
-    done
-    kubectl run -n mysql-operator mysql-init \
-      --image=mysql:8.0 \
-      --rm -i \
-      --restart=Never \
-      -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
-      -u root \
-      -p${MYSQL_ROOT_PASSWORD} \
-      --execute="
-        CREATE DATABASE IF NOT EXISTS wordpress;
-        CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123';
-        GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%';
-        FLUSH PRIVILEGES;
-        SHOW DATABASES;
-      "
-    kubectl run -n mysql-operator mysql-verify \
-      --image=mysql:8.0 \
-      --rm -i \
-      --restart=Never \
-      -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
-      -u wordpress \
-      -pwordpress123 \
-      -e "SHOW DATABASES; USE wordpress; SHOW TABLES;"
+    
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm repo update
+    
+    helm upgrade --install mysql bitnami/mysql \
+      --namespace mysql \
+      --set auth.rootPassword="${MYSQL_ROOT_PASSWORD}" \
+      --set auth.database="${MYSQL_DATABASE}" \
+      --set auth.username="${MYSQL_USER}" \
+      --set auth.password="${MYSQL_PASSWORD}" \
+      --set primary.persistence.enabled=true \
+      --set primary.persistence.storageClass=gp2 \
+      --set primary.persistence.size=10Gi \
+      --set primary.resources.requests.memory=512Mi \
+      --set primary.resources.requests.cpu=250m \
+      --set primary.resources.limits.memory=1Gi \
+      --set primary.resources.limits.cpu=500m \
+      --wait --timeout=10m
+    
+    echo "Waiting for MySQL to be ready..."
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s
+    
+    echo "Testing MySQL connectivity..."
+    kubectl run mysql-client --rm -i --restart=Never --image=mysql:8.0 --namespace=mysql -- \
+      mysql -h mysql.mysql.svc.cluster.local -u${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SHOW DATABASES;"
+    
+    echo "MySQL deployed successfully!"
   dependencies:
     - deploy_prerequisites
   only:
     - main
-  retry:
-    max: 2
-    when:
-      - script_failure
 
 deploy_wordpress:
   stage: deploy
@@ -204,77 +153,78 @@ deploy_wordpress:
     helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    kubectl run -n mysql-operator mysql-check \
-      --image=mysql:8.0 \
-      --rm -i --restart=Never \
-      --command -- \
-      mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
-      -u wordpress \
-      -pwordpress123 \
-      -e "SELECT 1;" || echo "MySQL check failed"
-    if [ -f helm/wordpress-values.yaml ]; then
-      cat helm/wordpress-values.yaml
-    else
-      echo "No custom wordpress-values.yaml found"
-    fi
-    if [ -f helm/wordpress-values.yaml ]; then
-      helm upgrade --install wordpress bitnami/wordpress \
-        --namespace default \
-        --values helm/wordpress-values.yaml \
-        --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
-        --wait --timeout 15m
-    else
-      helm upgrade --install wordpress bitnami/wordpress \
-        --namespace default \
-        --set mariadb.enabled=false \
-        --set externalDatabase.host=my-mysql-innodbcluster.mysql-operator.svc.cluster.local \
-        --set externalDatabase.port=3306 \
-        --set externalDatabase.user=wordpress \
-        --set externalDatabase.password=wordpress123 \
-        --set externalDatabase.database=wordpress \
-        --set wordpressUsername=admin \
-        --set wordpressPassword=AdminPass123! \
-        --set wordpressEmail=demo@axual.com \
-        --set wordpressFirstName=Admin \
-        --set wordpressLastName=User \
-        --set wordpressBlogName="Axual Demo Blog" \
-        --set ingress.enabled=true \
-        --set ingress.ingressClassName=alb \
-        --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
-        --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
-        --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip \
-        --wait --timeout 15m
-    fi
-    timeout 600s bash -c 'until kubectl get pods -l app.kubernetes.io/name=wordpress -o name 2>/dev/null | grep -q pod/; do echo "Waiting for WordPress pods..."; sleep 10; done'
-    kubectl get pods -l app.kubernetes.io/name=wordpress
-    kubectl logs -l app.kubernetes.io/name=wordpress -c wordpress --tail=50 || echo "Could not fetch logs yet"
+    
+    # Deploy WordPress
+    helm upgrade --install wordpress bitnami/wordpress \
+      --namespace default \
+      --set mariadb.enabled=false \
+      --set externalDatabase.host=mysql.mysql.svc.cluster.local \
+      --set externalDatabase.port=3306 \
+      --set externalDatabase.user=${MYSQL_USER} \
+      --set externalDatabase.password=${MYSQL_PASSWORD} \
+      --set externalDatabase.database=${MYSQL_DATABASE} \
+      --set wordpressUsername=admin \
+      --set wordpressPassword=AdminPass123! \
+      --set wordpressEmail=demo@axual.com \
+      --set wordpressFirstName=Admin \
+      --set wordpressLastName=User \
+      --set wordpressBlogName="Axual Demo Blog" \
+      --set persistence.enabled=true \
+      --set persistence.storageClass=gp2 \
+      --set persistence.size=5Gi \
+      --set resources.requests.memory=512Mi \
+      --set resources.requests.cpu=250m \
+      --set resources.limits.memory=1Gi \
+      --set resources.limits.cpu=500m \
+      --set replicaCount=2 \
+      --set ingress.enabled=true \
+      --set ingress.ingressClassName=alb \
+      --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
+      --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
+      --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip \
+      --set ingress.annotations."alb\.ingress\.kubernetes\.io/listen-ports"='[{"HTTP": 80}]' \
+      --set ingress.annotations."alb\.ingress\.kubernetes\.io/healthcheck-path"=/wp-login.php \
+      --wait --timeout=15m
+    
+    echo "Waiting for WordPress to be ready..."
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
+    
+    echo "=========================================="
     echo "Deployment Complete!"
+    echo "=========================================="
     echo "WordPress URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
     echo "Admin URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
     echo "Username: admin"
     echo "Password: AdminPass123!"
+    echo "=========================================="
   dependencies:
     - deploy_mysql
   only:
     - main
-  retry:
-    max: 2
-    when:
-      - script_failure
 
 smoke_tests:
   stage: test
   script: |
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    echo "Running smoke tests..."
     kubectl cluster-info
-    kubectl get pods -A
+    echo ""
+    echo "MySQL pods:"
+    kubectl get pods -n mysql
+    echo ""
+    echo "WordPress pods:"
     kubectl get pods -l app.kubernetes.io/name=wordpress
-    kubectl get pods -n mysql-operator
+    echo ""
+    echo "Services:"
+    kubectl get svc -n mysql
     kubectl get svc wordpress
-    kubectl get svc -n mysql-operator my-mysql-innodbcluster
+    echo ""
+    echo "Ingress:"
+    kubectl get ingress
+    echo ""
+    echo "PVCs:"
     kubectl get pvc -A
-    kubectl logs -l app.kubernetes.io/name=wordpress --tail=50 || true
+    echo ""
     echo "All smoke tests passed!"
   dependencies:
     - deploy_wordpress

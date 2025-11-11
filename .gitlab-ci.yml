@@ -20,9 +20,9 @@ before_script:
   - tar -zxvf helm-v3.17.0-linux-amd64.tar.gz
   - mv linux-amd64/helm /usr/local/bin/helm
 
-  - wget https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip
-  - unzip terraform_1.9.0_linux_amd64.zip
-  - mv terraform /usr/local/bin/
+  - wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip"
+  - unzip -o terraform.zip -d /usr/local/bin/
+  - chmod +x /usr/local/bin/terraform
   
   - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
   - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
@@ -35,10 +35,18 @@ validate_terraform:
     - cd terraform
     - terraform init
     - terraform validate
-    - terraform plan -out=../plan.tfplan -detailed-exitcode
+    - |
+      set +e
+      terraform plan -out=plan.tfplan -detailed-exitcode
+      plan_exit=$?
+      set -e
+      if [ "$plan_exit" -eq 1 ]; then
+        echo "terraform plan failed"
+        exit 1
+      fi
   artifacts:
     paths:
-      - plan.tfplan
+      - terraform/plan.tfplan
     expire_in: 1 hour
   only:
     - main
@@ -49,7 +57,7 @@ deploy_infrastructure:
   script:
     - cd terraform
     - terraform init
-    - terraform apply -input=false ../plan.tfplan
+    - terraform apply -input=false plan.tfplan
     - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     - kubectl cluster-info
     - kubectl get nodes

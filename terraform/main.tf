@@ -197,64 +197,10 @@ resource "aws_eks_node_group" "main" {
 
 # --- IAM Roles for IRSA (Kubernetes Add-ons) ---
 
-data "aws_iam_policy_document" "alb_controller_policy_doc" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "acm:DescribeCertificate", "acm:ListCertificates", "acm:GetCertificate",
-      "ec2:AuthorizeSecurityGroupIngress", "ec2:CreateSecurityGroup", "ec2:CreateTags", 
-      "ec2:DeleteTags", "ec2:DeleteSecurityGroup", "ec2:DescribeAccountAttributes", 
-      "ec2:DescribeAddresses", "ec2:DescribeAvailabilityZones", "ec2:DescribeInternetGateways", 
-      "ec2:DescribeVpcs", "ec2:DescribeVpcPeeringConnections", "ec2:DescribeSubnets", 
-      "ec2:DescribeSecurityGroups", "ec2:DescribeTags", "ec2:DescribeClassicLinkInstances", 
-      "ec2:DescribeInstanceStatus", "ec2:DescribeInstances", "ec2:DescribeNetworkInterfaces", 
-      "ec2:ModifySecurityGroupRules", "ec2:RevokeSecurityGroupIngress",
-      "elasticloadbalancing:RegisterTargets", "elasticloadbalancing:DeregisterTargets", 
-      "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth", 
-      "elasticloadbalancing:ModifyTargetGroup", "elasticloadbalancing:ModifyTargetGroupAttributes"
-    ]
-    resources = ["*"]
-  }
-  statement {
-    effect = "Allow"
-    actions = [
-      "elasticloadbalancing:CreateListener", "elasticloadbalancing:CreateLoadBalancer", 
-      "elasticloadbalancing:CreateRule", "elasticloadbalancing:CreateTargetGroup", 
-      "elasticloadbalancing:DeleteListener", "elasticloadbalancing:DeleteLoadBalancer", 
-      "elasticloadbalancing:DeleteRule", "elasticloadbalancing:DeleteTargetGroup", 
-      "elasticloadbalancing:DescribeListeners", "elasticloadbalancing:DescribeLoadBalancerPolicies", 
-      "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeRules", 
-      "elasticloadbalancing:DescribeSSLPolicies", "elasticloadbalancing:DescribeTags", 
-      "elasticloadbalancing:DescribeTargetGroupAttributes", "elasticloadbalancing:ModifyListener", 
-      "elasticloadbalancing:ModifyRule", "elasticloadbalancing:ModifyLoadBalancerAttributes", 
-      "elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags", 
-      "elasticloadbalancing:SetIpAddressType"
-    ]
-    resources = ["*"]
-  }
-  statement {
-    effect = "Allow"
-    actions = [
-      "iam:CreateServiceLinkedRole",
-      "iam:GetServerCertificate",
-      "iam:ListServerCertificates",
-      "ec2:CreateTags",
-      "ec2:DeleteTags"
-    ]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "iam:AWSServiceName"
-      values   = ["elasticloadbalancing.amazonaws.com"]
-    }
-  }
-}
-
 resource "aws_iam_policy" "alb_controller_custom_policy" {
-  name        = "${var.cluster_name}-ALB-Controller-Policy"
-  policy = data.aws_iam_policy_document.alb_controller_policy_doc.json
+  name   = "${var.cluster_name}-ALB-Controller-Policy"
+  policy = file("${path.module}/policies/aws-load-balancer-controller-policy.json")
 }
-
 
 resource "aws_iam_role" "ebs_csi_driver" {
   name = "${var.cluster_name}-ebs-csi-driver"

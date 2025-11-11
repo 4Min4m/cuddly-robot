@@ -85,8 +85,7 @@ deploy_mysql:
     - for i in 1 2 3; do helm upgrade --install mysql-operator mysql-operator/mysql-operator --namespace mysql-operator --create-namespace --wait --timeout 5m && break || sleep 30; done
     - helm upgrade --install my-mysql-innodbcluster mysql-operator/mysql-innodbcluster --namespace mysql-operator --set credentials.root.password="DemoPassword123!" --set database="wordpress" --set tls.useSelfSigned=true --set instances=1 --wait --timeout 10m
     - kubectl wait --for=condition=ready pod -n mysql-operator -l app.kubernetes.io/instance=my-mysql-innodbcluster --timeout=600s
-    
-    - until kubectl run -n mysql-operator mysql-init --image=mysql:8.0 -it --rm --restart=Never -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local -u root -pDemoPassword123! -e "CREATE DATABASE IF NOT EXISTS wordpress; CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123'; GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%'; FLUSH PRIVILEGES;"; do sleep 10; done
+    - until kubectl run -n mysql-operator mysql-init --image=mysql:8.0 --rm --restart=Never -- mysql -h my-mysql-innodbcluster.mysql-operator.svc.cluster.local -u root -pDemoPassword123! -e "CREATE DATABASE IF NOT EXISTS wordpress; CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'wordpress123'; GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'%'; FLUSH PRIVILEGES;"; do sleep 10; done
   dependencies:
     - deploy_prerequisites
   only:
@@ -102,7 +101,7 @@ deploy_wordpress:
     - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     - helm upgrade --install wordpress bitnami/wordpress --namespace default --set wordpressUsername=admin --set wordpressPassword="AdminPass123!" --set wordpressEmail=demo@axual.com --set mariadb.enabled=false --set externalDatabase.host="my-mysql-innodbcluster.mysql-operator.svc.cluster.local" --set externalDatabase.user=wordpress --set externalDatabase.password=wordpress123 --set externalDatabase.database=wordpress --set externalDatabase.port=3306 --set persistence.enabled=true --set persistence.storageClass=gp2 --set persistence.size=5Gi --set service.type=ClusterIP --set ingress.enabled=true --set ingress.ingressClassName=alb --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com --wait --timeout 10m
     - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
-    - echo: "Deployment Complete!
+    - echo "Deployment Complete!"
     - echo "WordPress URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
     - echo "Admin URL http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
     - echo "Username admin"

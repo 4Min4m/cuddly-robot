@@ -1,4 +1,3 @@
-# Define Terraform and AWS Provider requirements
 terraform {
   required_version = ">= 1.0"
   required_providers {
@@ -6,7 +5,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    # Required for the OIDC provider thumbprint data source
     tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0"
@@ -25,12 +23,11 @@ data "aws_availability_zones" "available" {
 
 data "aws_caller_identity" "current" {}
 
-# Get TLS certificate for OIDC setup
 data "tls_certificate" "eks_cluster" {
   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
-# --- Networking (VPC for Low Latency / Security) ---
+# --- Networking ---
 
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -43,7 +40,6 @@ resource "aws_internet_gateway" "main" {
   tags = { Name = "${var.cluster_name}-igw" }
 }
 
-# Public Subnets (Used for Load Balancers)
 resource "aws_subnet" "public" {
   count             = 2
   vpc_id            = aws_vpc.main.id
@@ -56,7 +52,6 @@ resource "aws_subnet" "public" {
   }
 }
 
-# Private Subnets (Used for EKS Nodes for Security and App Pods)
 resource "aws_subnet" "private" {
   count             = 2
   vpc_id            = aws_vpc.main.id
@@ -68,7 +63,6 @@ resource "aws_subnet" "private" {
   }
 }
 
-# NAT Gateway (For secure egress from private subnets)
 resource "aws_eip" "nat" {
   domain = "vpc"
   tags = { Name = "${var.cluster_name}-nat-eip" }
@@ -81,7 +75,6 @@ resource "aws_nat_gateway" "main" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# Route Tables
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -136,7 +129,7 @@ resource "aws_iam_openid_connect_provider" "oidc_provider" {
   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
-# --- IAM Roles for EKS Cluster Components (Standard Roles) ---
+# --- IAM Roles for EKS Cluster Components ---
 
 resource "aws_iam_role" "cluster" {
   name = "${var.cluster_name}-cluster-role"
@@ -180,7 +173,6 @@ resource "aws_iam_role_policy_attachment" "node_registry_policy" {
   role       = aws_iam_role.node.name
 }
 
-# EKS Node Group (Burstable, in Private Subnets for security)
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.cluster_name}-nodes"
@@ -205,11 +197,8 @@ resource "aws_eks_node_group" "main" {
 
 # --- IAM Roles for IRSA (Kubernetes Add-ons) ---
 
-# FIX: Create the custom policy for the ALB Controller from the required JSON.
-
 data "aws_iam_policy_document" "alb_controller_policy_doc" {
   statement {
-    sid    = "EKSLoadBalancerControllerPolicy"
     effect = "Allow"
     actions = [
       "acm:DescribeCertificate", "acm:ListCertificates", "acm:GetCertificate",
@@ -227,7 +216,6 @@ data "aws_iam_policy_document" "alb_controller_policy_doc" {
     resources = ["*"]
   }
   statement {
-    sid    = "LoadBalancerCreation"
     effect = "Allow"
     actions = [
       "elasticloadbalancing:CreateListener", "elasticloadbalancing:CreateLoadBalancer", 
@@ -244,6 +232,22 @@ data "aws_iam_policy_document" "alb_controller_policy_doc" {
     ]
     resources = ["*"]
   }
+  statement {
+    effect = "Allow"
+    actions = [
+      "iam:CreateServiceLinkedRole",
+      "iam:GetServerCertificate",
+      "iam:ListServerCertificates",
+      "ec2:CreateTags",
+      "ec2:DeleteTags"
+    ]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["elasticloadbalancing.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_policy" "alb_controller_custom_policy" {
@@ -252,10 +256,9 @@ resource "aws_iam_policy" "alb_controller_custom_policy" {
 }
 
 
-# 1. EBS CSI Driver Role (for Stateful Apps)
 resource "aws_iam_role" "ebs_csi_driver" {
   name = "${var.cluster_name}-ebs-csi-driver"
-  depends_on = [aws_iam_openid_connect_provider.oidc_provider] # Dependency added for safety
+  depends_on = [aws_iam_openid_connect_provider.oidc_provider] 
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -263,7 +266,7 @@ resource "aws_iam_role" "ebs_csi_driver" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Effect = "Allow"
       Principal = {
-        Federated = aws_iam_openid_connect_provider.oidc_provider.arn # FIX: Reference the created OIDC Provider ARN
+        Federated = aws_iam_openid_connect_provider.oidc_provider.arn
       }
       Condition = {
         StringEquals = {
@@ -279,10 +282,9 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_driver_policy" {
   role       = aws_iam_role.ebs_csi_driver.name
 }
 
-# 2. ALB Controller Role (for Public Ingress)
 resource "aws_iam_role" "alb_controller" {
   name = "${var.cluster_name}-alb-controller-role"
-  depends_on = [aws_iam_openid_connect_provider.oidc_provider] # Dependency added for safety
+  depends_on = [aws_iam_openid_connect_provider.oidc_provider]
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -290,7 +292,7 @@ resource "aws_iam_role" "alb_controller" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Effect = "Allow"
       Principal = {
-        Federated = aws_iam_openid_connect_provider.oidc_provider.arn # FIX: Reference the created OIDC Provider ARN
+        Federated = aws_iam_openid_connect_provider.oidc_provider.arn
       }
       Condition = {
         StringEquals = {
@@ -302,7 +304,7 @@ resource "aws_iam_role" "alb_controller" {
 }
 
 resource "aws_iam_role_policy_attachment" "alb_controller_policy" {
-  policy_arn = aws_iam_policy.alb_controller_custom_policy.arn # FIX: Use the ARN of the custom-created policy
+  policy_arn = aws_iam_policy.alb_controller_custom_policy.arn
   role       = aws_iam_role.alb_controller.name
 }
 

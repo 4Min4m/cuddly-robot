@@ -20,8 +20,10 @@ before_script:
   - tar -zxvf helm-v3.17.0-linux-amd64.tar.gz
   - mv linux-amd64/helm /usr/local/bin/helm
 
-  - apk add terraform --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
-
+  - wget https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip
+  - unzip terraform_1.9.0_linux_amd64.zip
+  - mv terraform /usr/local/bin/
+  
   - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
   - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
   - aws configure set region ${AWS_REGION}

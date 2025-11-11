@@ -5,6 +5,7 @@ set -e
 echo "🚀 Starting Axual Demo Deployment..."
 
 echo "📦 Step 1: Deploying EKS Cluster with Terraform..."
+cd terraform
 terraform init
 terraform apply -auto-approve
 

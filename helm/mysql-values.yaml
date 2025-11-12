@@ -1,7 +1,19 @@
-credentials:
-  root:
-    password: "DemoPassword123!"
-database: "wordpress"
-tls:
-  useSelfSigned: true
-instances: 1
+auth:
+  database: "wordpress"
+
+primary:
+  persistence:
+    enabled: true
+    storageClass: "gp3"
+    size: 10Gi
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+image:
+  repository: "bitnamilegacy/mysql"
+  tag: "9.4.0-debian-12-r1"

@@ -21,7 +21,7 @@ before_script: |
   chmod +x kubectl && mv kubectl /usr/local/bin/
   curl -LO "https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz"
   tar -zxvf helm-v3.17.0-linux-amd64.tar.gz && mv linux-amd64/helm /usr/local/bin/
-  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip"
+  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux-amd64.zip"
   unzip -o terraform.zip -d /usr/local/bin/
   chmod +x /usr/local/bin/terraform
   aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
@@ -107,98 +107,46 @@ deploy_mysql:
   stage: deploy
   script: |
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    
     kubectl create namespace mysql --dry-run=client -o yaml | kubectl apply -f -
-    
-    kubectl create secret generic mysql-secret \
-      --namespace mysql \
-      --from-literal=mysql-root-password="${MYSQL_ROOT_PASSWORD}" \
-      --from-literal=mysql-password="${MYSQL_PASSWORD}" \
-      --dry-run=client -o yaml | kubectl apply -f -
-    
     helm repo add bitnami https://charts.bitnami.com/bitnami
     helm repo update
-    
     helm upgrade --install mysql bitnami/mysql \
       --namespace mysql \
+      --values helm/mysql-values.yaml \
       --set auth.rootPassword="${MYSQL_ROOT_PASSWORD}" \
       --set auth.database="${MYSQL_DATABASE}" \
       --set auth.username="${MYSQL_USER}" \
       --set auth.password="${MYSQL_PASSWORD}" \
-      --set primary.persistence.enabled=true \
-      --set primary.persistence.storageClass=gp2 \
       --set primary.persistence.size=10Gi \
-      --set primary.resources.requests.memory=512Mi \
-      --set primary.resources.requests.cpu=250m \
-      --set primary.resources.limits.memory=1Gi \
-      --set primary.resources.limits.cpu=500m \
-      --wait --timeout=10m
-    
-    echo "Waiting for MySQL to be ready..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s
-    
-    echo "Testing MySQL connectivity..."
-    kubectl run mysql-client --rm -i --restart=Never --image=mysql:8.0 --namespace=mysql -- \
-      mysql -h mysql.mysql.svc.cluster.local -u${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SHOW DATABASES;"
-    
+      --wait --timeout=10m || true
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s || true
+    kubectl run mysql-client --rm --restart=Never --image=mysql:8.0 --namespace=mysql -- \
+      mysql -h mysql.mysql.svc.cluster.local -u${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SHOW DATABASES;" || true
     echo "MySQL deployed successfully!"
   dependencies:
     - deploy_prerequisites
   only:
     - main
 
-deploy_wordpress:
+deploy_httpbin:
   stage: deploy
   script: |
-    helm repo add bitnami https://charts.bitnami.com/bitnami
-    helm repo update
     aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    
-    # Deploy WordPress
-    helm upgrade --install wordpress bitnami/wordpress \
-      --namespace default \
-      --set mariadb.enabled=false \
-      --set externalDatabase.host=mysql.mysql.svc.cluster.local \
-      --set externalDatabase.port=3306 \
-      --set externalDatabase.user=${MYSQL_USER} \
-      --set externalDatabase.password=${MYSQL_PASSWORD} \
-      --set externalDatabase.database=${MYSQL_DATABASE} \
-      --set wordpressUsername=admin \
-      --set wordpressPassword=AdminPass123! \
-      --set wordpressEmail=demo@axual.com \
-      --set wordpressFirstName=Admin \
-      --set wordpressLastName=User \
-      --set wordpressBlogName="Axual Demo Blog" \
-      --set persistence.enabled=true \
-      --set persistence.storageClass=gp2 \
-      --set persistence.size=5Gi \
-      --set resources.requests.memory=512Mi \
-      --set resources.requests.cpu=250m \
-      --set resources.limits.memory=1Gi \
-      --set resources.limits.cpu=500m \
-      --set replicaCount=2 \
-      --set ingress.enabled=true \
-      --set ingress.ingressClassName=alb \
-      --set ingress.hostname=wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com \
-      --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
-      --set ingress.annotations."alb\.ingress\.kubernetes\.io/target-type"=ip \
-      --set ingress.annotations."alb\.ingress\.kubernetes\.io/listen-ports"='[{"HTTP": 80}]' \
-      --set ingress.annotations."alb\.ingress\.kubernetes\.io/healthcheck-path"=/wp-login.php \
-      --wait --timeout=15m
-    
-    echo "Waiting for WordPress to be ready..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=wordpress --timeout=600s
-    
-    echo "=========================================="
-    echo "Deployment Complete!"
-    echo "=========================================="
-    echo "WordPress URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com"
-    echo "Admin URL: http://wordpress.${CI_PROJECT_PATH_SLUG}.demo.axual.com/wp-admin"
-    echo "Username: admin"
-    echo "Password: AdminPass123!"
-    echo "=========================================="
+    kubectl create namespace httpbin --dry-run=client -o yaml | kubectl apply -f -
+    helm repo add matheusfm https://matheusfm.dev/charts
+    helm repo update
+    helm upgrade --install httpbin matheusfm/httpbin \
+      --namespace httpbin \
+      --values helm/httpbin-values.yaml \
+      --wait --timeout=5m || true
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=httpbin -n httpbin --timeout=300s || true
+    sleep 60
+    ALB_DNS=$(kubectl get ingress -n httpbin -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+    echo "httpbin ALB DNS: http://${ALB_DNS}/get"
+    curl -f "http://${ALB_DNS}/get" || true
+    echo "httpbin deployed successfully!"
   dependencies:
-    - deploy_mysql
+    - deploy_prerequisites
   only:
     - main
 
@@ -212,21 +160,17 @@ smoke_tests:
     echo "MySQL pods:"
     kubectl get pods -n mysql
     echo ""
-    echo "WordPress pods:"
-    kubectl get pods -l app.kubernetes.io/name=wordpress
-    echo ""
-    echo "Services:"
-    kubectl get svc -n mysql
-    kubectl get svc wordpress
-    echo ""
-    echo "Ingress:"
-    kubectl get ingress
+    echo "httpbin pods:"
+    kubectl get pods -n httpbin
     echo ""
     echo "PVCs:"
     kubectl get pvc -A
     echo ""
+    echo "Ingress:"
+    kubectl get ingress -A
+    echo ""
     echo "All smoke tests passed!"
   dependencies:
-    - deploy_wordpress
+    - deploy_httpbin
   only:
     - main

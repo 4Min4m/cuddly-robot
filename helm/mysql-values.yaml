@@ -1,5 +1,5 @@
 auth:
-  database: "wordpress"
+  database: "test"
 
 primary:
   persistence:

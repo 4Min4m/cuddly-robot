@@ -8,46 +8,39 @@ variables:
   CLUSTER_NAME: "axual-demo-cluster"
   AWS_REGION: "us-east-1"
   MYSQL_ROOT_PASSWORD: "DemoPassword123!"
-  MYSQL_DATABASE: "wordpress"
-  MYSQL_USER: "wordpress"
-  MYSQL_PASSWORD: "wordpress123"
+  MYSQL_DATABASE: "test"
+  MYSQL_USER: "test"
+  MYSQL_PASSWORD: "test123"
 
 image: alpine:latest
 
-before_script: |
+.setup_tools: &setup_tools |
   apk add --no-cache python3 py3-pip curl wget unzip bash ca-certificates
   pip3 install awscli --break-system-packages
   curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
   chmod +x kubectl && mv kubectl /usr/local/bin/
   curl -LO "https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz"
   tar -zxvf helm-v3.17.0-linux-amd64.tar.gz && mv linux-amd64/helm /usr/local/bin/
-  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux-amd64.zip"
-  unzip -o terraform.zip -d /usr/local/bin/
-  chmod +x /usr/local/bin/terraform
   aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
   aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
   aws configure set region ${AWS_REGION}
-  aws sts get-caller-identity
+
+.setup_terraform: &setup_terraform |
+  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux-amd64.zip"
+  unzip -o terraform.zip -d /usr/local/bin/
+  chmod +x /usr/local/bin/terraform
 
 validate_terraform:
   stage: validate
   when: manual
-  script: |
-    cd terraform
-    terraform init
-    terraform validate
-    set +e
-    terraform plan -out=plan.tfplan -detailed-exitcode
-    plan_exit=$?
-    set -e
-    if [ "$plan_exit" -eq 1 ]; then
-      echo "Terraform plan failed due to configuration or credentials error."
-      exit 1
-    elif [ "$plan_exit" -ne 0 ] && [ "$plan_exit" -ne 2 ]; then
-      echo "Terraform planning failed with unexpected exit code: $plan_exit."
-      exit 1
-    fi
-    echo "Terraform plan succeeded(Exit code $plan_exit)."
+  before_script:
+    - *setup_tools
+    - *setup_terraform
+  script:
+    - cd terraform
+    - terraform init
+    - terraform validate
+    - terraform plan -out=plan.tfplan
   artifacts:
     paths:
       - terraform/plan.tfplan
@@ -59,18 +52,16 @@ validate_terraform:
 deploy_infrastructure:
   stage: infrastructure
   when: manual
-  script: |
-    cd terraform
-    terraform init
-    terraform apply -input=false plan.tfplan
-    echo "Waiting for EKS cluster to reach ACTIVE state..."
-    aws eks wait cluster-active --name ${CLUSTER_NAME} --region ${AWS_REGION} || { 
-      echo "EKS cluster failed to become active or timed out."
-      exit 1
-    }
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} --alias ${CLUSTER_NAME}
-    kubectl cluster-info
-    kubectl get nodes
+  before_script:
+    - *setup_tools
+    - *setup_terraform
+  script:
+    - cd terraform
+    - terraform init
+    - terraform apply -input=false plan.tfplan
+    - aws eks wait cluster-active --name ${CLUSTER_NAME} --region ${AWS_REGION}
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - kubectl get nodes
   dependencies:
     - validate_terraform
   only:
@@ -78,26 +69,31 @@ deploy_infrastructure:
 
 deploy_prerequisites:
   stage: deploy
-  script: |
-    helm repo add eks https://aws.github.io/eks-charts
-    helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
-    helm repo add bitnami https://charts.bitnami.com/bitnami
-    helm repo update
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
-    ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
-    helm upgrade --install aws-ebs-csi-driver aws-ebs-csi-driver/aws-ebs-csi-driver --namespace kube-system \
-      --set controller.serviceAccount.create=true \
-      --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
-      --wait --timeout 5m
-    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller --namespace kube-system \
-      --set clusterName=${CLUSTER_NAME} \
-      --set region=${AWS_REGION} \
-      --set serviceAccount.create=true \
-      --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
-      --wait --timeout 5m
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
+  before_script:
+    - *setup_tools
+  script:
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - helm repo add eks https://aws.github.io/eks-charts
+    - helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+    - helm repo update
+    - EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
+    - ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
+    - |
+      helm upgrade --install aws-ebs-csi-driver aws-ebs-csi-driver/aws-ebs-csi-driver \
+        --namespace kube-system \
+        --set controller.serviceAccount.create=true \
+        --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
+        --wait --timeout 5m
+    - |
+      helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        --namespace kube-system \
+        --set clusterName=${CLUSTER_NAME} \
+        --set region=${AWS_REGION} \
+        --set serviceAccount.create=true \
+        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
+        --wait --timeout 5m
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
   dependencies:
     - deploy_infrastructure
   only:
@@ -105,72 +101,53 @@ deploy_prerequisites:
 
 deploy_mysql:
   stage: deploy
-  script: |
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    kubectl create namespace mysql --dry-run=client -o yaml | kubectl apply -f -
-    helm repo add bitnami https://charts.bitnami.com/bitnami
-    helm repo update
-    helm upgrade --install mysql bitnami/mysql \
-      --namespace mysql \
-      --values helm/mysql-values.yaml \
-      --set auth.rootPassword="${MYSQL_ROOT_PASSWORD}" \
-      --set auth.database="${MYSQL_DATABASE}" \
-      --set auth.username="${MYSQL_USER}" \
-      --set auth.password="${MYSQL_PASSWORD}" \
-      --set primary.persistence.size=10Gi \
-      --wait --timeout=10m || true
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s || true
-    kubectl run mysql-client --rm --restart=Never --image=mysql:8.0 --namespace=mysql -- \
-      mysql -h mysql.mysql.svc.cluster.local -u${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SHOW DATABASES;" || true
-    echo "MySQL deployed successfully!"
+  before_script:
+    - *setup_tools
+  script:
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - kubectl create namespace mysql --dry-run=client -o yaml | kubectl apply -f -
+    - helm repo add bitnami https://charts.bitnami.com/bitnami
+    - helm repo update
+    - |
+      helm upgrade --install mysql bitnami/mysql \
+        --namespace mysql \
+        --values helm/mysql-values.yaml \
+        --set auth.rootPassword="${MYSQL_ROOT_PASSWORD}" \
+        --set auth.database="${MYSQL_DATABASE}" \
+        --set auth.username="${MYSQL_USER}" \
+        --set auth.password="${MYSQL_PASSWORD}" \
+        --wait --timeout=10m
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s
   dependencies:
     - deploy_prerequisites
   only:
     - main
 
-deploy_httpbin:
+deploy_app:
   stage: deploy
-  script: |
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    kubectl create namespace httpbin --dry-run=client -o yaml | kubectl apply -f -
-    helm repo add matheusfm https://matheusfm.dev/charts
-    helm repo update
-    helm upgrade --install httpbin matheusfm/httpbin \
-      --namespace httpbin \
-      --values helm/httpbin-values.yaml \
-      --wait --timeout=5m || true
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=httpbin -n httpbin --timeout=300s || true
-    sleep 60
-    ALB_DNS=$(kubectl get ingress -n httpbin -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
-    echo "httpbin ALB DNS: http://${ALB_DNS}/get"
-    curl -f "http://${ALB_DNS}/get" || true
-    echo "httpbin deployed successfully!"
+  before_script:
+    - *setup_tools
+  script:
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - kubectl create namespace myapp --dry-run=client -o yaml | kubectl apply -f -
+    - helm upgrade --install myapp ./my-app --namespace myapp --set service.type=LoadBalancer --wait --timeout=5m
+    - kubectl wait --for=condition=ready pod -l app=my-app -n myapp --timeout=300s
   dependencies:
-    - deploy_prerequisites
+    - deploy_mysql
   only:
     - main
 
 smoke_tests:
   stage: test
-  script: |
-    aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    echo "Running smoke tests..."
-    kubectl cluster-info
-    echo ""
-    echo "MySQL pods:"
-    kubectl get pods -n mysql
-    echo ""
-    echo "httpbin pods:"
-    kubectl get pods -n httpbin
-    echo ""
-    echo "PVCs:"
-    kubectl get pvc -A
-    echo ""
-    echo "Ingress:"
-    kubectl get ingress -A
-    echo ""
-    echo "All smoke tests passed!"
+  before_script:
+    - *setup_tools
+  script:
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - kubectl get pods -n mysql
+    - kubectl get pods -n myapp
+    - kubectl get pvc -A
+    - kubectl get svc -A
   dependencies:
-    - deploy_httpbin
+    - deploy_app
   only:
     - main

@@ -70,7 +70,6 @@ deploy_infrastructure:
 
 deploy_prerequisites:
   stage: deploy
-  when: manual
   before_script:
     - *setup_tools
   script:
@@ -104,7 +103,6 @@ deploy_prerequisites:
 
 deploy_mysql:
   stage: deploy
-  when: manual
   before_script:
     - *setup_tools
   script:
@@ -120,8 +118,8 @@ deploy_mysql:
         --set auth.database="${MYSQL_DATABASE}" \
         --set auth.username="${MYSQL_USER}" \
         --set auth.password="${MYSQL_PASSWORD}" \
-        --wait --timeout=5m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=300s
+        --wait --timeout=10m
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s
   dependencies:
     - deploy_prerequisites
   only:
@@ -163,31 +161,40 @@ cleanup_k8s_resources:
     - *setup_tools
   script:
     - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} || true
-    - helm uninstall myapp -n myapp || true
-    - helm uninstall mysql -n mysql || true
-    - helm uninstall aws-load-balancer-controller -n kube-system || true
-    - helm uninstall aws-ebs-csi-driver -n kube-system || true
-    - kubectl delete namespace myapp || true
-    - kubectl delete namespace mysql || true
+    - echo "Deleting Helm releases..."
+    - helm uninstall myapp -n myapp --wait || true
+    - helm uninstall mysql -n mysql --wait || true
+    - helm uninstall aws-load-balancer-controller -n kube-system --wait || true
+    - helm uninstall aws-ebs-csi-driver -n kube-system --wait || true
+    - echo "Waiting for services to be deleted..."
+    - sleep 30
+    - echo "Force deleting namespaces..."
+    - kubectl delete namespace myapp --force --grace-period=0 || true
+    - kubectl delete namespace mysql --force --grace-period=0 || true
     - kubectl delete sc gp3 || true
     - echo "Waiting for LoadBalancers to be deleted..."
     - sleep 60
-    - kubectl get svc -A
+    - echo "Checking remaining resources..."
+    - kubectl get svc -A || true
+    - kubectl get pvc -A || true
   only:
     - main
 
 destroy_infrastructure:
   stage: destroy
   when: manual
+  needs:
+    - cleanup_k8s_resources
   before_script:
     - *setup_tools
     - *setup_terraform
   script:
     - cd terraform
     - terraform init
+    - echo "Checking what will be destroyed..."
+    - terraform plan -destroy
+    - echo "Starting infrastructure destruction..."
     - terraform destroy -auto-approve
     - echo "All AWS resources destroyed!"
-  dependencies:
-    - cleanup_k8s_resources
   only:
     - main

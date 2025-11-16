@@ -32,7 +32,6 @@ image: alpine:latest
 
 validate_terraform:
   stage: validate
-  when: manual
   before_script:
     - *setup_tools
     - *setup_terraform
@@ -51,7 +50,6 @@ validate_terraform:
 
 deploy_infrastructure:
   stage: infrastructure
-  when: manual
   before_script:
     - *setup_tools
     - *setup_terraform
@@ -84,6 +82,8 @@ deploy_prerequisites:
         --set controller.serviceAccount.create=true \
         --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
         --wait --timeout 5m
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
+    - kubectl apply -f helm/gp3-sc.yaml
     - |
       helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
         --namespace kube-system \
@@ -92,7 +92,6 @@ deploy_prerequisites:
         --set serviceAccount.create=true \
         --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
         --wait --timeout 5m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
     - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
   dependencies:
     - deploy_infrastructure
@@ -116,8 +115,8 @@ deploy_mysql:
         --set auth.database="${MYSQL_DATABASE}" \
         --set auth.username="${MYSQL_USER}" \
         --set auth.password="${MYSQL_PASSWORD}" \
-        --wait --timeout=10m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=600s
+        --wait --timeout=5m
+    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n mysql --timeout=300s
   dependencies:
     - deploy_prerequisites
   only:

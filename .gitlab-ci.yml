@@ -3,6 +3,7 @@ stages:
   - infrastructure
   - deploy
   - test
+  - destroy
 
 variables:
   CLUSTER_NAME: "axual-demo-cluster"
@@ -148,5 +149,41 @@ smoke_tests:
     - kubectl get svc -A
   dependencies:
     - deploy_app
+  only:
+    - main
+
+cleanup_k8s_resources:
+  stage: destroy
+  when: manual
+  before_script:
+    - *setup_tools
+  script:
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} || true
+    - helm uninstall myapp -n myapp || true
+    - helm uninstall mysql -n mysql || true
+    - helm uninstall aws-load-balancer-controller -n kube-system || true
+    - helm uninstall aws-ebs-csi-driver -n kube-system || true
+    - kubectl delete namespace myapp || true
+    - kubectl delete namespace mysql || true
+    - kubectl delete sc gp3 || true
+    - echo "Waiting for LoadBalancers to be deleted..."
+    - sleep 60
+    - kubectl get svc -A
+  only:
+    - main
+
+destroy_infrastructure:
+  stage: destroy
+  when: manual
+  before_script:
+    - *setup_tools
+    - *setup_terraform
+  script:
+    - cd terraform
+    - terraform init
+    - terraform destroy -auto-approve
+    - echo "All AWS resources destroyed!"
+  dependencies:
+    - cleanup_k8s_resources
   only:
     - main

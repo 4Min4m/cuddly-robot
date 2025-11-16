@@ -33,6 +33,7 @@ image: alpine:latest
 
 validate_terraform:
   stage: validate
+  when: manual
   before_script:
     - *setup_tools
     - *setup_terraform
@@ -51,6 +52,7 @@ validate_terraform:
 
 deploy_infrastructure:
   stage: infrastructure
+  when: manual
   before_script:
     - *setup_tools
     - *setup_terraform
@@ -68,6 +70,7 @@ deploy_infrastructure:
 
 deploy_prerequisites:
   stage: deploy
+  when: manual
   before_script:
     - *setup_tools
   script:
@@ -101,6 +104,7 @@ deploy_prerequisites:
 
 deploy_mysql:
   stage: deploy
+  when: manual
   before_script:
     - *setup_tools
   script:
@@ -130,7 +134,7 @@ deploy_app:
   script:
     - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     - kubectl create namespace myapp --dry-run=client -o yaml | kubectl apply -f -
-    - helm upgrade --install myapp ./my-app --namespace myapp --set service.type=LoadBalancer --wait --timeout=5m
+    - helm upgrade --install myapp ./helm --namespace myapp --set service.type=LoadBalancer --wait --timeout=5m
     - kubectl wait --for=condition=ready pod -l app=my-app -n myapp --timeout=300s
   dependencies:
     - deploy_mysql

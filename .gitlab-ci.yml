@@ -134,7 +134,7 @@ deploy_app:
   script:
     - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
     - kubectl create namespace myapp --dry-run=client -o yaml | kubectl apply -f -
-    - helm upgrade --install myapp ./helm --namespace myapp --set service.type=LoadBalancer --wait --timeout=5m
+    - helm upgrade --install myapp helm --namespace myapp --values helm/myapp-values.yaml --set service.type=LoadBalancer --wait --timeout=5m
     - kubectl wait --for=condition=ready pod -l app=my-app -n myapp --timeout=300s
   dependencies:
     - deploy_mysql

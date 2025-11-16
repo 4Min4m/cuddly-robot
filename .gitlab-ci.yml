@@ -27,7 +27,7 @@ image: alpine:latest
   aws configure set region ${AWS_REGION}
 
 .setup_terraform: &setup_terraform |
-  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux-amd64.zip"
+  wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.13.5/terraform_1.13.5_linux_amd64.zip"
   unzip -o terraform.zip -d /usr/local/bin/
   chmod +x /usr/local/bin/terraform
 

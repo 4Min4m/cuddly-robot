@@ -1,4 +1,4 @@
-# Axual Demo Assessment - Cloud Infrastructure
+# Demo Assessment - Cloud Infrastructure
 
 A production-grade Kubernetes infrastructure demonstrating stateful and stateless application deployment on AWS EKS.
 
@@ -276,7 +276,7 @@ VPC (10.0.0.0/16)
 1. **Clone repository and configure variables** in `.gitlab-ci.yml`:
    ```yaml
    variables:
-     CLUSTER_NAME: "axual-demo-cluster"
+     CLUSTER_NAME: "demo-cluster"
      AWS_REGION: "us-east-1"
    ```
 
@@ -329,7 +329,7 @@ terraform destroy -auto-approve
 - **Total: ~$190/month**
 
 **Cost optimization tips:**
-- Stop cluster when not in use: `eksctl delete cluster --name axual-demo-cluster`
+- Stop cluster when not in use: `eksctl delete cluster --name demo-cluster`
 - Use Spot instances for non-production workloads
 - Enable cluster autoscaling to scale to zero
 
@@ -340,7 +340,7 @@ terraform destroy -auto-approve
 **EBS CSI Driver not working:**
 ```bash
 # Verify IAM role
-aws iam get-role --role-name axual-demo-cluster-ebs-csi-driver
+aws iam get-role --role-name demo-cluster-ebs-csi-driver
 
 # Check pod logs
 kubectl logs -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver

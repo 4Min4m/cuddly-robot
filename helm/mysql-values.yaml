@@ -4,7 +4,7 @@ auth:
 primary:
   persistence:
     enabled: true
-    storageClass: "gp3"
+    storageClass: "azure-disk-premium"
     size: 10Gi
   resources:
     requests:

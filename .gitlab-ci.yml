@@ -7,7 +7,8 @@ stages:
 
 variables:
   CLUSTER_NAME: "axual-demo-cluster"
-  AWS_REGION: "us-east-1"
+  AZURE_REGION: "eastus"
+  RESOURCE_GROUP: "axual-demo-cluster-rg"
   MYSQL_ROOT_PASSWORD: "DemoPassword123!"
   MYSQL_DATABASE: "test"
   MYSQL_USER: "test"
@@ -17,14 +18,13 @@ image: alpine:latest
 
 .setup_tools: &setup_tools |
   apk add --no-cache python3 py3-pip curl wget unzip bash ca-certificates
-  pip3 install awscli --break-system-packages
+  pip3 install azure-cli --break-system-packages
   curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
   chmod +x kubectl && mv kubectl /usr/local/bin/
   curl -LO "https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz"
   tar -zxvf helm-v3.17.0-linux-amd64.tar.gz && mv linux-amd64/helm /usr/local/bin/
-  aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
-  aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
-  aws configure set region ${AWS_REGION}
+  az login --service-principal -u ${AZURE_CLIENT_ID} -p ${AZURE_CLIENT_SECRET} --tenant ${AZURE_TENANT_ID}
+  az account set --subscription ${AZURE_SUBSCRIPTION_ID}
 
 .setup_terraform: &setup_terraform |
   wget -O terraform.zip "https://releases.hashicorp.com/terraform/1.13.5/terraform_1.13.5_linux_amd64.zip"
@@ -60,8 +60,9 @@ deploy_infrastructure:
     - cd terraform
     - terraform init
     - terraform apply -input=false plan.tfplan
-    - aws eks wait cluster-active --name ${CLUSTER_NAME} --region ${AWS_REGION}
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - echo "Waiting for AKS cluster to be ready..."
+    - sleep 60
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
     - kubectl get nodes
   dependencies:
     - validate_terraform
@@ -73,29 +74,9 @@ deploy_prerequisites:
   before_script:
     - *setup_tools
   script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-    - helm repo add eks https://aws.github.io/eks-charts
-    - helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
-    - helm repo update
-    - EBS_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-ebs-csi-driver" --query 'Role.Arn' --output text)
-    - ALB_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-alb-controller-role" --query 'Role.Arn' --output text)
-    - |
-      helm upgrade --install aws-ebs-csi-driver aws-ebs-csi-driver/aws-ebs-csi-driver \
-        --namespace kube-system \
-        --set controller.serviceAccount.create=true \
-        --set controller.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$EBS_ROLE_ARN" \
-        --wait --timeout 5m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-ebs-csi-driver -n kube-system --timeout=300s
-    - kubectl apply -f helm/gp3-sc.yaml
-    - |
-      helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-        --namespace kube-system \
-        --set clusterName=${CLUSTER_NAME} \
-        --set region=${AWS_REGION} \
-        --set serviceAccount.create=true \
-        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$ALB_ROLE_ARN" \
-        --wait --timeout 5m
-    - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=aws-load-balancer-controller -n kube-system --timeout=300s
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
+    - kubectl apply -f helm/azure-disk-sc.yaml
+    - kubectl get storageclass
   dependencies:
     - deploy_infrastructure
   only:
@@ -106,7 +87,7 @@ deploy_mysql:
   before_script:
     - *setup_tools
   script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
     - kubectl create namespace mysql --dry-run=client -o yaml | kubectl apply -f -
     - helm repo add bitnami https://charts.bitnami.com/bitnami
     - helm repo update
@@ -130,10 +111,13 @@ deploy_app:
   before_script:
     - *setup_tools
   script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
     - kubectl create namespace myapp --dry-run=client -o yaml | kubectl apply -f -
     - helm upgrade --install myapp helm --namespace myapp --values helm/myapp-values.yaml --set service.type=LoadBalancer
     - kubectl wait --for=condition=ready pod -l app=my-app -n myapp --timeout=300s
+    - echo "Waiting for LoadBalancer IP..."
+    - sleep 30
+    - kubectl get svc -n myapp
   dependencies:
     - deploy_mysql
   only:
@@ -144,11 +128,13 @@ smoke_tests:
   before_script:
     - *setup_tools
   script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
     - kubectl get pods -n mysql
     - kubectl get pods -n myapp
     - kubectl get pvc -A
     - kubectl get svc -A
+    - echo "Getting LoadBalancer IP..."
+    - kubectl get svc -n myapp -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}'
   dependencies:
     - deploy_app
   only:
@@ -160,18 +146,16 @@ cleanup_k8s_resources:
   before_script:
     - *setup_tools
   script:
-    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} || true
+    - az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing || true
     - echo "Deleting Helm releases..."
     - helm uninstall myapp -n myapp --wait || true
     - helm uninstall mysql -n mysql --wait || true
-    - helm uninstall aws-load-balancer-controller -n kube-system --wait || true
-    - helm uninstall aws-ebs-csi-driver -n kube-system --wait || true
     - echo "Waiting for services to be deleted..."
     - sleep 30
     - echo "Force deleting namespaces..."
     - kubectl delete namespace myapp --force --grace-period=0 || true
     - kubectl delete namespace mysql --force --grace-period=0 || true
-    - kubectl delete sc gp3 || true
+    - kubectl delete sc azure-disk-premium || true
     - echo "Waiting for LoadBalancers to be deleted..."
     - sleep 60
     - echo "Checking remaining resources..."
@@ -195,6 +179,6 @@ destroy_infrastructure:
     - terraform plan -destroy
     - echo "Starting infrastructure destruction..."
     - terraform destroy -auto-approve
-    - echo "All AWS resources destroyed!"
+    - echo "All Azure resources destroyed!"
   only:
     - main

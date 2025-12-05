@@ -1,11 +1,11 @@
-variable "aws_region" {
-  description = "AWS region for resources"
+variable "azure_region" {
+  description = "Azure region for resources"
   type        = string
-  default     = "us-east-1"
+  default     = "eastus"
 }
 
 variable "cluster_name" {
-  description = "Name of the EKS cluster"
+  description = "Name of the AKS cluster"
   type        = string
   default     = "axual-demo-cluster"
 }

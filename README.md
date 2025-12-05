@@ -1,12 +1,12 @@
-# Demo Assessment - Cloud Infrastructure
+# Demo Assessment - Cloud Infrastructure (Azure)
 
-A production-grade Kubernetes infrastructure demonstrating stateful and stateless application deployment on AWS EKS.
+A production-grade Kubernetes infrastructure demonstrating stateful and stateless application deployment on Azure AKS.
 
 ## Overview
 
 Complete cloud-native setup featuring:
-- **AWS EKS Cluster** provisioned with Terraform
-- **Stateful Application**: MySQL with persistent volumes (gp3)
+- **Azure AKS Cluster** provisioned with Terraform
+- **Stateful Application**: MySQL with persistent volumes (Premium SSD)
 - **Stateless Application**: Nginx web server
 - **GitLab CI/CD** pipeline for automated deployments
 - **Low-latency optimized** network architecture
@@ -14,16 +14,16 @@ Complete cloud-native setup featuring:
 ## Technical Architecture
 
 ### Infrastructure
-- Multi-AZ EKS cluster (v1.30) with managed node groups
-- Private subnets for application pods, public subnets for load balancers
-- EBS CSI Driver for stateful workload persistence
-- AWS Load Balancer Controller for public internet access
-- NAT Gateway for secure outbound connectivity
+- AKS cluster (v1.30) with managed node pools
+- Virtual Network with dedicated subnet for AKS
+- Azure Disk CSI Driver for stateful workload persistence (built-in)
+- Azure Load Balancer for public internet access (built-in)
+- System-assigned managed identity for secure Azure API access
 
 ### Applications
-- **MySQL 8.0**: Bitnami Helm chart with persistent storage (10Gi gp3 volumes)
-- **Nginx**: Lightweight web server accessible via AWS LoadBalancer
-- **Public Access**: Internet-facing Application Load Balancer
+- **MySQL 8.0**: Bitnami Helm chart with persistent storage (10Gi Premium SSD)
+- **Nginx**: Lightweight web server accessible via Azure LoadBalancer
+- **Public Access**: Internet-facing Azure Load Balancer
 
 ## Project Structure
 
@@ -31,52 +31,50 @@ Complete cloud-native setup featuring:
 .
 ├── README.md
 ├── terraform/
-│   ├── main.tf                    # EKS cluster, VPC, IAM roles
-│   ├── variables.tf               # Cluster configuration
-│   └── policies/
-│       └── aws-load-balancer-controller-policy.json
+│   ├── main.tf                    # AKS cluster, VNet, managed identity
+│   └── variables.tf               # Cluster configuration
 ├── helm/
 │   ├── Chart.yaml                 # Nginx application chart
 │   ├── values.yaml                # Default values
 │   ├── myapp-values.yaml          # Custom overrides
-│   ├── mysql-values.yaml          # MySQL configuration
-│   ├── gp3-sc.yaml               # GP3 StorageClass
+│   ├── mysql-values.yaml          # MySQL configuration (Azure)
+│   ├── azure-disk-sc.yaml        # Premium SSD StorageClass
 │   └── templates/
 │       ├── deployment.yaml
 │       ├── service.yaml
 │       └── _helpers.tpl
-└── .gitlab-ci.yml                # CI/CD pipeline
+└── .gitlab-ci.yml                # CI/CD pipeline (Azure)
 ```
 
 ## Design Decisions
 
 ### Platform Selection
-- **AWS EKS over Azure AKS**: Maintained identical cloud-native patterns while using accessible infrastructure
+- **Azure AKS**: Fully managed Kubernetes with seamless Azure integration
 - **Terraform for IaC**: Declarative infrastructure with state management and reproducibility
 - **Helm for Applications**: Standardized Kubernetes packaging with version control
 - **GitLab CI/CD**: Automated deployment pipeline with manual approval gates
 
 ### Cost & Performance Optimization
-- **t3.medium burstable instances**: 2 vCPU, 4GB RAM - balanced performance/cost
+- **Standard_D2s_v3 instances**: 2 vCPU, 8GB RAM - balanced performance/cost
 - **2-node cluster**: Sufficient for demo workloads with auto-scaling capability (min: 1, max: 3)
-- **Multi-AZ deployment**: High availability across us-east-1a and us-east-1b
-- **gp3 EBS volumes**: Latest generation with better price/performance ratio
-- **Managed node groups**: Reduced operational overhead
+- **Single region deployment**: eastus for low latency
+- **Premium SSD storage**: High-performance persistent disks with better IOPS
+- **Managed node pools**: Reduced operational overhead with automatic updates
 
 ### Security & Operations
-- **Private node groups**: Worker nodes isolated in private subnets
-- **IRSA (IAM Roles for Service Accounts)**: Least privilege access for EBS CSI and ALB Controller
-- **Network segmentation**: Separate public/private subnet routing
-- **Security groups**: Restrictive ingress/egress rules
+- **System-assigned managed identity**: No credential management required
+- **Virtual Network integration**: Isolated network environment for AKS
+- **Azure CNI networking**: Direct pod IP addressing for better performance
+- **Network policies**: Built-in Azure Network Policy support
 
 ## Deployment Pipeline
 
 ### GitLab CI/CD Stages
 
 1. **Validate**: Terraform plan and validation
-2. **Infrastructure**: EKS cluster provisioning (~15-20 min)
+2. **Infrastructure**: AKS cluster provisioning (~10-15 min)
 3. **Deploy**: 
-   - Prerequisites (EBS CSI, ALB Controller, StorageClass)
+   - Prerequisites (StorageClass)
    - MySQL deployment with persistent volumes
    - Nginx application deployment
 4. **Test**: Smoke tests for resource validation
@@ -87,70 +85,73 @@ Complete cloud-native setup featuring:
 - Artifact caching for Terraform plans
 - Parallel job execution where possible
 - Comprehensive error handling with `|| true` fallbacks
-- Automated kubeconfig management
+- Automated kubeconfig management via Azure CLI
 
 ## Operational Excellence
 
 ### Monitoring Strategy
 **Recommended Stack (not implemented in demo):**
-- **Prometheus + Grafana**: Cluster and application metrics
-  - Node resource utilization (CPU, memory, disk)
-  - Pod health and restart counts
+- **Azure Monitor for Containers**: Native AKS monitoring
+  - Node and pod resource utilization
+  - Container logs and metrics
+  - Performance insights and alerts
+- **Prometheus + Grafana**: Application-level metrics
   - MySQL query performance and connection pools
   - Nginx request rates and response times
-- **AWS CloudWatch**: Infrastructure-level monitoring
-  - EKS control plane logs
-  - VPC flow logs for network analysis
-  - LoadBalancer metrics (request count, latency, error rates)
-- **Health Checks**: Kubernetes liveness and readiness probes
+- **Azure Application Insights**: Application performance monitoring
 
 **Implementation approach:**
 ```bash
+# Enable Azure Monitor
+az aks enable-addons -a monitoring \
+  -n ${CLUSTER_NAME} \
+  -g ${RESOURCE_GROUP}
+
+# Install Prometheus stack
 helm install prometheus-stack prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
 
 ### Log Management & Retention
 **Recommended Stack:**
-- **Fluent-bit**: Lightweight log shipper running as DaemonSet
-- **Elasticsearch**: Centralized log storage with indexing
-- **Kibana**: Log visualization and search interface
+- **Azure Monitor Logs**: Centralized log collection
+  - Container logs automatically collected
+  - Query with KQL (Kusto Query Language)
+  - Integration with Azure Sentinel for security
+- **Alternative**: Fluent-bit + Elasticsearch + Kibana
 
 **Retention Policy:**
-- Application logs: 30 days (debug/info level)
-- Audit logs: 90 days (compliance requirement)
-- Security logs: 1 year (incident investigation)
-
-**Alternative:** AWS CloudWatch Logs with automatic retention policies
+- Application logs: 30 days
+- Audit logs: 90 days
+- Security logs: 1 year
 
 **Implementation:**
 ```bash
-helm install fluent-bit fluent/fluent-bit \
-  --set backend.type=es \
-  --set backend.es.host=elasticsearch
+# Logs are automatically collected when Azure Monitor is enabled
+# Query in Azure Portal under Monitor > Logs
 ```
 
 ### Cluster Reliability & Maintenance
 
 **High Availability:**
-- Multi-AZ node distribution for fault tolerance
-- Managed node groups with automatic security patching
-- EBS volume replication within availability zones
+- Availability Zones support (can be enabled for production)
+- Managed node pools with automatic security patching
+- Azure Disk replication within region
 
 **Backup Strategy:**
-- **Velero**: Kubernetes resource and persistent volume backups
-  - Daily automated backups
+- **Velero with Azure plugin**: Kubernetes resource and volume backups
+  - Daily automated backups to Azure Blob Storage
   - 7-day retention for development
   - 30-day retention for production
-- **MySQL**: Automated daily backups via Bitnami chart configuration
+- **MySQL**: Automated daily backups via Bitnami chart
 
 **Scaling:**
 - Horizontal Pod Autoscaler (HPA) based on CPU/memory
-- Cluster Autoscaler for node group expansion
+- Cluster Autoscaler for node pool expansion (enabled by default)
 - Resource requests/limits defined in all deployments
 
 **Maintenance Windows:**
-- Node group updates: Weekly during off-peak hours
+- Node pool updates: Automatic during configured maintenance window
 - Application deployments: Blue-green strategy for zero downtime
 - Database maintenance: Automated backup before schema changes
 
@@ -158,21 +159,21 @@ helm install fluent-bit fluent/fluent-bit \
 ```bash
 # Install Velero for backups
 velero install \
-  --provider aws \
-  --plugins velero/velero-plugin-for-aws:v1.8.0 \
-  --bucket eks-backup-bucket \
-  --backup-location-config region=us-east-1
+  --provider azure \
+  --plugins velero/velero-plugin-for-microsoft-azure:v1.9.0 \
+  --bucket aks-backup-container \
+  --backup-location-config resourceGroup=${RESOURCE_GROUP},storageAccount=velerostorage
 ```
 
 ### Authentication & RBAC
 
 **Cluster Access:**
-- **AWS IAM**: Primary authentication mechanism
-  - IAM users/roles mapped to Kubernetes groups
-  - MFA enforcement for production access
-- **OIDC Provider**: EKS-integrated identity federation
-  - Service accounts use IRSA for AWS API calls
-  - No long-lived credentials stored in pods
+- **Azure AD Integration**: Primary authentication mechanism
+  - Azure AD users/groups mapped to Kubernetes RBAC
+  - MFA enforcement through Azure AD
+- **Managed Identity**: AKS uses system-assigned identity
+  - No service principal credentials to manage
+  - Automatic token rotation
 
 **RBAC Structure:**
 ```yaml
@@ -187,65 +188,58 @@ rules:
   verbs: ["get", "list", "watch", "create", "update"]
 ```
 
-**Implemented Roles:**
-- **EBS CSI Driver**: `system:serviceaccount:kube-system:ebs-csi-controller-sa`
-- **ALB Controller**: `system:serviceaccount:kube-system:aws-load-balancer-controller`
-
 **Best Practices:**
 - Namespace-based isolation (myapp, mysql, kube-system)
 - ServiceAccounts for all application pods
 - NetworkPolicies for pod-to-pod communication restrictions
+- Azure Policy for Kubernetes for compliance
 
 ### Network Design & Security
 
-**VPC Architecture:**
+**VNet Architecture:**
 ```
-VPC (10.0.0.0/16)
-├── Public Subnets (10.0.0.0/24, 10.0.1.0/24)
-│   ├── Internet Gateway
-│   ├── NAT Gateway
-│   └── LoadBalancers (internet-facing)
-└── Private Subnets (10.0.10.0/24, 10.0.11.0/24)
-    ├── EKS Worker Nodes
+VNet (10.0.0.0/16)
+└── AKS Subnet (10.0.1.0/24)
+    ├── AKS Nodes
     ├── Application Pods
     └── MySQL StatefulSets
 ```
 
 **Traffic Flow:**
-1. **Inbound**: Internet → ALB (public subnet) → NodePort → Pod (private subnet)
-2. **Outbound**: Pod → NAT Gateway (public subnet) → Internet Gateway
-3. **Inter-pod**: Direct communication within VPC (CNI plugin)
+1. **Inbound**: Internet → Azure Load Balancer → Service → Pod
+2. **Outbound**: Pod → Azure Default Route → Internet
+3. **Inter-pod**: Direct communication within VNet (Azure CNI)
 
 **Security Layers:**
 
 1. **Network Level:**
-   - Security Groups: Stateful firewall rules at instance level
-   - Network ACLs: Stateless subnet-level filtering
-   - VPC Flow Logs: Network traffic audit trail
+   - Network Security Groups (NSGs): Stateful firewall rules
+   - Azure Firewall: Optional centralized outbound filtering
+   - VNet service endpoints: Secure access to Azure services
 
 2. **Kubernetes Level:**
-   - NetworkPolicies: Micro-segmentation between namespaces
+   - Azure Network Policies: Micro-segmentation between namespaces
    - PodSecurityStandards: Enforce security best practices
-   - Ingress Controllers: TLS termination and WAF integration
+   - Azure Application Gateway Ingress Controller: WAF integration
 
 3. **Application Level:**
    - TLS encryption for all external traffic
-   - Secrets management via AWS Secrets Manager or Kubernetes Secrets
-   - Container image scanning (Trivy, Clair)
+   - Azure Key Vault for secrets management
+   - Container image scanning with Azure Container Registry
 
 **Implemented Security:**
-- Private node groups (no direct internet access)
+- Private node pools (nodes not directly exposed)
 - LoadBalancer service type for controlled public exposure
-- IAM least-privilege roles for service accounts
+- System-assigned managed identity with least privilege
 
 ## Technology Stack
 
 **Infrastructure:**
 - Terraform 1.13.5
-- AWS EKS 1.30
-- VPC with multi-AZ subnets
-- EBS CSI Driver 2.x
-- AWS Load Balancer Controller 2.x
+- Azure AKS 1.30
+- VNet with dedicated subnet
+- Azure Disk CSI Driver (built-in)
+- Azure Load Balancer (built-in)
 
 **Applications:**
 - MySQL 8.0 (Bitnami Helm chart)
@@ -255,21 +249,35 @@ VPC (10.0.0.0/16)
 **CI/CD:**
 - GitLab CI/CD
 - Alpine Linux base image
-- AWS CLI, kubectl, terraform, helm
+- Azure CLI, kubectl, terraform, helm
 
 **Storage:**
-- gp3 EBS volumes (encrypted)
+- Premium SSD (Premium_LRS)
 - 10Gi persistent storage for MySQL
 - WaitForFirstConsumer volume binding
 
 ## Quick Start
 
 ### Prerequisites
-- AWS account with appropriate IAM permissions
+- Azure subscription with appropriate permissions
 - GitLab account with CI/CD runners
-- AWS credentials configured as GitLab CI/CD variables:
-  - `AWS_ACCESS_KEY_ID`
-  - `AWS_SECRET_ACCESS_KEY`
+- Azure service principal credentials configured as GitLab CI/CD variables:
+  - `AZURE_CLIENT_ID`
+  - `AZURE_CLIENT_SECRET`
+  - `AZURE_TENANT_ID`
+  - `AZURE_SUBSCRIPTION_ID`
+
+### Creating Azure Service Principal
+
+```bash
+# Create service principal
+az ad sp create-for-rbac --name "gitlab-ci-demo" --role="Contributor" --scopes="/subscriptions/${SUBSCRIPTION_ID}"
+
+# Output will provide:
+# - appId (AZURE_CLIENT_ID)
+# - password (AZURE_CLIENT_SECRET)
+# - tenant (AZURE_TENANT_ID)
+```
 
 ### Deployment Steps
 
@@ -277,18 +285,18 @@ VPC (10.0.0.0/16)
    ```yaml
    variables:
      CLUSTER_NAME: "demo-cluster"
-     AWS_REGION: "us-east-1"
+     AZURE_REGION: "eastus"
    ```
 
 2. **Run pipeline stages** (GitLab UI):
    - Trigger `validate_terraform` (manual)
-   - Trigger `deploy_infrastructure` (manual, ~20 min)
+   - Trigger `deploy_infrastructure` (manual, ~15 min)
    - Automatic: `deploy_prerequisites`, `deploy_mysql`, `deploy_app`
    - Automatic: `smoke_tests`
 
 3. **Access applications**:
    ```bash
-   # Get LoadBalancer URL
+   # Get LoadBalancer IP
    kubectl get svc -n myapp
    curl http://<EXTERNAL-IP>
    ```
@@ -316,62 +324,96 @@ cd terraform
 terraform destroy -auto-approve
 ```
 
-**⚠️ Important:** Always run cleanup in order (K8s resources → Terraform) to avoid orphaned AWS resources.
+**⚠️ Important:** Always run cleanup in order (K8s resources → Terraform) to avoid orphaned Azure resources.
 
 ## Cost Estimation
 
-**Monthly costs (us-east-1):**
-- EKS Cluster: $73
-- EC2 (2x t3.medium): ~$60
-- NAT Gateway: ~$32
-- EBS Volumes: ~$5
-- LoadBalancers: ~$20
-- **Total: ~$190/month**
+**Monthly costs (eastus):**
+- AKS Cluster: Free (pay only for nodes)
+- VMs (2x Standard_D2s_v3): ~$140
+- Load Balancer: ~$20
+- Premium SSD: ~$20
+- **Total: ~$180/month**
 
 **Cost optimization tips:**
-- Stop cluster when not in use: `eksctl delete cluster --name demo-cluster`
-- Use Spot instances for non-production workloads
-- Enable cluster autoscaling to scale to zero
+- Stop cluster when not in use: `az aks stop --name ${CLUSTER_NAME} --resource-group ${RESOURCE_GROUP}`
+- Start when needed: `az aks start --name ${CLUSTER_NAME} --resource-group ${RESOURCE_GROUP}`
+- Use Spot VMs for non-production workloads
+- Enable cluster autoscaling to scale to minimum
 
 ## Troubleshooting
 
 ### Common Issues
 
-**EBS CSI Driver not working:**
+**Azure Disk not attaching:**
 ```bash
-# Verify IAM role
-aws iam get-role --role-name demo-cluster-ebs-csi-driver
+# Verify managed identity permissions
+az role assignment list --assignee $(az aks show -n ${CLUSTER_NAME} -g ${RESOURCE_GROUP} --query identity.principalId -o tsv)
 
-# Check pod logs
-kubectl logs -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+# Check pod events
+kubectl describe pod <pod-name> -n mysql
 ```
 
 **LoadBalancer stuck in pending:**
 ```bash
-# Check ALB controller logs
-kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-
-# Verify service
+# Check service events
 kubectl describe svc myapp-my-app -n myapp
+
+# Verify NSG rules
+az network nsg list -g ${RESOURCE_GROUP}
 ```
 
 **Terraform destroy fails:**
 ```bash
-# Force delete LoadBalancers first
-aws elbv2 describe-load-balancers --query 'LoadBalancers[*].LoadBalancerArn' | \
-  xargs -I {} aws elbv2 delete-load-balancer --load-balancer-arn {}
+# Delete LoadBalancer services first via kubectl
+kubectl delete svc -n myapp --all
+kubectl delete svc -n mysql --all
+
+# Wait for Azure to clean up LoadBalancers
+sleep 60
 
 # Then retry destroy
 terraform destroy -auto-approve
 ```
 
+**Authentication issues:**
+```bash
+# Re-authenticate
+az login
+
+# Get kubeconfig again
+az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER_NAME} --overwrite-existing
+```
+
+## Azure vs AWS Comparison
+
+| Feature | AWS EKS | Azure AKS |
+|---------|---------|-----------|
+| **Control Plane Cost** | $73/month | Free |
+| **Managed Identity** | IRSA (complex setup) | Built-in (simple) |
+| **Networking** | VPC with public/private subnets | VNet with single subnet |
+| **Storage** | EBS CSI (manual install) | Azure Disk CSI (built-in) |
+| **Load Balancer** | ALB Controller (manual) | Built-in integration |
+| **Node Pricing** | t3.medium: ~$30/node | D2s_v3: ~$70/node |
+| **Setup Time** | 20-25 minutes | 10-15 minutes |
+| **Complexity** | Higher (more components) | Lower (more managed) |
+
 ## Future Enhancements
 
-- [ ] Implement monitoring stack (Prometheus + Grafana)
-- [ ] Add centralized logging (EFK stack)
+- [ ] Enable Azure Monitor for Containers
+- [ ] Add Azure Application Gateway Ingress Controller
 - [ ] Configure Velero for backup/restore
-- [ ] Implement GitOps with ArgoCD
+- [ ] Implement GitOps with ArgoCD or Flux
 - [ ] Add Horizontal Pod Autoscaling
-- [ ] Configure Ingress with TLS certificates
-- [ ] Implement NetworkPolicies for namespace isolation
-- [ ] Add Kubernetes Dashboard for cluster visualization
+- [ ] Configure Ingress with TLS certificates from Azure Key Vault
+- [ ] Implement Azure Network Policies for namespace isolation
+- [ ] Enable Azure AD integration for RBAC
+- [ ] Add Azure Policy for Kubernetes compliance
+- [ ] Enable Availability Zones for production workloads
+
+## Additional Resources
+
+- [Azure AKS Documentation](https://docs.microsoft.com/en-us/azure/aks/)
+- [Azure CLI Reference](https://docs.microsoft.com/en-us/cli/azure/)
+- [Terraform Azure Provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs)
+- [Azure Monitor for Containers](https://docs.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview)
